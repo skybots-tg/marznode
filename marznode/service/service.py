@@ -137,19 +137,78 @@ class MarzService(MarzServiceBase):
 
     async def FetchUsersStats(self, stream: Stream[Empty, UsersStats]) -> None:
         await stream.recv_message()
-        all_stats = defaultdict(int)
+        
+        # суммарный трафик по всем backend'ам
+        total_usage: dict[int, int] = defaultdict(int)
+        # раздельный RX/TX (если backend умеет)
+        total_uplink: dict[int, int] = defaultdict(int)
+        total_downlink: dict[int, int] = defaultdict(int)
+        # метаданные по пользователям
+        meta: dict[int, dict[str, str]] = {}
 
-        for backend in self._backends.values():
+        for backend_name, backend in self._backends.items():
+            # 1) как и раньше — usage
             stats = await backend.get_usages()
+            for uid, usage in stats.items():
+                total_usage[uid] += usage
 
-            for user, usage in stats.items():
-                all_stats[user] += usage
+            # 2) необязательные метаданные
+            get_meta = getattr(backend, "get_users_meta", None)
+            if not get_meta:
+                continue
 
-        logger.debug(all_stats)
-        user_stats = [
-            UsersStats.UserStats(uid=uid, usage=usage)
-            for uid, usage in all_stats.items()
-        ]
+            try:
+                backend_meta = await get_meta()
+            except Exception as e:
+                # не хотим, чтобы падала вся статистика из-за одного backend'а
+                logger.warning(f"Failed to get metadata from backend {backend_name}: {e}")
+                continue
+
+            for uid, info in backend_meta.items():
+                # info — обычный dict
+                user_meta = meta.setdefault(uid, {})
+                
+                # не затираем уже известные поля, если другой backend успел их заполнить
+                if info.get("remote_ip") and not user_meta.get("remote_ip"):
+                    user_meta["remote_ip"] = info["remote_ip"]
+                
+                if info.get("client_name") and not user_meta.get("client_name"):
+                    user_meta["client_name"] = info["client_name"]
+                elif not user_meta.get("client_name"):
+                    user_meta["client_name"] = backend_name
+                
+                if info.get("user_agent") and not user_meta.get("user_agent"):
+                    user_meta["user_agent"] = info["user_agent"]
+                
+                if "uplink" in info:
+                    total_uplink[uid] += int(info["uplink"])
+                if "downlink" in info:
+                    total_downlink[uid] += int(info["downlink"])
+                
+                # на будущее — протокол, tls_fp, etc
+                for key in ("protocol", "tls_fingerprint"):
+                    if info.get(key) and not user_meta.get(key):
+                        user_meta[key] = info[key]
+
+        # собираем ответ
+        logger.debug(f"Total usage: {total_usage}, Meta: {meta}")
+        user_stats = []
+        for uid, usage in total_usage.items():
+            info = meta.get(uid, {})
+            user_stats.append(
+                UsersStats.UserStats(
+                    uid=uid,
+                    usage=usage,
+                    remote_ip=info.get("remote_ip", ""),
+                    client_name=info.get("client_name", ""),
+                    user_agent=info.get("user_agent", ""),
+                    uplink=total_uplink.get(uid, 0),
+                    downlink=total_downlink.get(uid, 0),
+                    protocol=info.get("protocol", ""),
+                    tls_fingerprint=info.get("tls_fingerprint", ""),
+                )
+            )
+        
         await stream.send_message(UsersStats(users_stats=user_stats))
 
     async def StreamBackendLogs(

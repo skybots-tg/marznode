@@ -45,6 +45,19 @@ message UsersStats {
   message UserStats {
     uint32 uid = 1;
     uint64 usage = 2;
+    // --- новые поля для учёта устройств / IP ---
+    // последний внешний IP, с которого был трафик
+    optional string remote_ip = 3;
+    // тип/название клиента (node/backend/клиент)
+    optional string client_name = 4;
+    // user agent или похожая строка, если сможем где-то вытащить
+    optional string user_agent = 5;
+    // раздельная статистика (на будущее)
+    optional uint64 uplink = 6;
+    optional uint64 downlink = 7;
+    // на вырост — протокол / TLS-отпечаток
+    optional string protocol = 8;
+    optional string tls_fingerprint = 9;
   }
   repeated UserStats users_stats = 1;
 }

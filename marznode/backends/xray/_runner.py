@@ -4,7 +4,7 @@ import asyncio
 import atexit
 import logging
 import re
-from collections import deque
+from collections import deque, defaultdict
 
 from anyio import create_memory_object_stream, ClosedResourceError, BrokenResourceError
 from anyio.streams.memory import MemoryObjectReceiveStream
@@ -13,6 +13,12 @@ from ._config import XrayConfig
 from ._utils import get_version
 
 logger = logging.getLogger(__name__)
+
+# Регулярное выражение для парсинга access логов Xray
+# Ищем email и IP в различных форматах логов
+ACCESS_LOG_RE = re.compile(
+    r"email[:\s]+(?P<email>[\w.\-@]+).*?(?:from|ip[:\s]|remote[:\s])\s*(?P<ip>[0-9a-fA-F:.\[\]]+)"
+)
 
 
 class XrayCore:
@@ -30,6 +36,9 @@ class XrayCore:
         self._logs_buffer = deque(maxlen=100)
         self._env = {"XRAY_LOCATION_ASSET": assets_path}
         self.stop_event = asyncio.Event()
+        
+        # Словарь для хранения метаданных пользователей (IP, user_agent и т.д.)
+        self._last_meta: dict[int, dict] = defaultdict(dict)
 
         atexit.register(lambda: asyncio.run(self.stop()) if self.running else None)
 
@@ -96,6 +105,29 @@ class XrayCore:
         finally:
             self.restarting = False
 
+    def _handle_log_line(self, line: str):
+        """Парсит строку лога для извлечения email и IP пользователя"""
+        try:
+            match = ACCESS_LOG_RE.search(line)
+            if not match:
+                return
+            
+            email = match.group("email")
+            ip = match.group("ip")
+            
+            # Извлекаем uid из email (формат: "uid.username")
+            try:
+                uid = int(email.split(".")[0])
+            except (ValueError, IndexError):
+                return
+            
+            # Сохраняем IP в метаданные пользователя
+            self._last_meta[uid]["remote_ip"] = ip
+            logger.debug(f"Captured IP {ip} for user {uid} from access log")
+            
+        except Exception as e:
+            logger.debug(f"Error parsing access log line: {e}")
+
     async def __capture_process_logs(self):
         """capture the logs, push it into the stream, and store it in the deck
         note that the stream blocks sending if it's full, so a deck is necessary"""
@@ -112,6 +144,15 @@ class XrayCore:
                         except ValueError:
                             pass
                         continue
+                
+                # Парсим строку для извлечения метаданных
+                if output and output != b"":
+                    try:
+                        line = output.decode(errors="ignore").strip()
+                        self._handle_log_line(line)
+                    except Exception as e:
+                        logger.debug(f"Error handling log line: {e}")
+                
                 self._logs_buffer.append(output)
                 if output == b"":
                     """break in case of eof"""
@@ -134,6 +175,10 @@ class XrayCore:
         """makes a copy of the buffer, so it could be read multiple times
         the buffer is never cleared in case logs from xray's exit are useful"""
         return self._logs_buffer.copy()
+    
+    def get_last_meta(self) -> dict[int, dict]:
+        """Возвращает последние метаданные по пользователям (IP, user_agent и т.д.)"""
+        return self._last_meta
 
     @property
     def running(self):

@@ -2,7 +2,8 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
+from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -72,12 +73,26 @@ class UsersData(_message.Message):
 class UsersStats(_message.Message):
     __slots__ = ("users_stats",)
     class UserStats(_message.Message):
-        __slots__ = ("uid", "usage")
+        __slots__ = ("uid", "usage", "remote_ip", "client_name", "user_agent", "uplink", "downlink", "protocol", "tls_fingerprint")
         UID_FIELD_NUMBER: _ClassVar[int]
         USAGE_FIELD_NUMBER: _ClassVar[int]
+        REMOTE_IP_FIELD_NUMBER: _ClassVar[int]
+        CLIENT_NAME_FIELD_NUMBER: _ClassVar[int]
+        USER_AGENT_FIELD_NUMBER: _ClassVar[int]
+        UPLINK_FIELD_NUMBER: _ClassVar[int]
+        DOWNLINK_FIELD_NUMBER: _ClassVar[int]
+        PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+        TLS_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
         uid: int
         usage: int
-        def __init__(self, uid: _Optional[int] = ..., usage: _Optional[int] = ...) -> None: ...
+        remote_ip: str
+        client_name: str
+        user_agent: str
+        uplink: int
+        downlink: int
+        protocol: str
+        tls_fingerprint: str
+        def __init__(self, uid: _Optional[int] = ..., usage: _Optional[int] = ..., remote_ip: _Optional[str] = ..., client_name: _Optional[str] = ..., user_agent: _Optional[str] = ..., uplink: _Optional[int] = ..., downlink: _Optional[int] = ..., protocol: _Optional[str] = ..., tls_fingerprint: _Optional[str] = ...) -> None: ...
     USERS_STATS_FIELD_NUMBER: _ClassVar[int]
     users_stats: _containers.RepeatedCompositeFieldContainer[UsersStats.UserStats]
     def __init__(self, users_stats: _Optional[_Iterable[_Union[UsersStats.UserStats, _Mapping]]] = ...) -> None: ...

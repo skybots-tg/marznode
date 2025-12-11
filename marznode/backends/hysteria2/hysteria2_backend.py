@@ -137,6 +137,43 @@ class HysteriaBackend(VPNBackend):
             usages[uid] = usage["tx"] + usage["rx"]
         return usages
 
+    async def get_users_meta(self) -> dict[int, dict]:
+        """
+        Возвращает метаданные пользователей: uplink/downlink из HTTP API.
+        """
+        url = f"http://127.0.0.1:{self._stats_port}/traffic?clear=0"
+        headers = {"Authorization": self._stats_secret}
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    data = await response.json()
+        except ClientConnectorError:
+            return {}
+
+        meta: dict[int, dict] = {}
+        for user_identifier, usage in data.items():
+            # user_identifier формат: "123.username"
+            try:
+                uid = int(user_identifier.split(".")[0])
+            except (ValueError, IndexError):
+                continue
+
+            info = {
+                "uplink": usage.get("tx", 0),
+                "downlink": usage.get("rx", 0),
+                "client_name": "hysteria2",
+            }
+
+            # Если hysteria в JSON даёт IP — можно добавить
+            # (в базовой версии API обычно не даёт, но на будущее)
+            if "ip" in usage:
+                info["remote_ip"] = usage["ip"]
+
+            meta[uid] = info
+
+        return meta
+
     async def _auth_callback(self, request: web.Request):
         user_key = (await request.json())["auth"]
         if user := self._users.get(user_key):

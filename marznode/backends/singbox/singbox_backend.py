@@ -150,6 +150,47 @@ class SingBoxBackend(VPNBackend):
 
         return stats
 
+    async def get_users_meta(self) -> dict[int, dict]:
+        """
+        Возвращает метаданные пользователей: uplink/downlink из API.
+        """
+        try:
+            api_stats = await asyncio.wait_for(
+                self._api.get_users_stats(reset=False), 3
+            )
+        except OSError:
+            return {}
+
+        uplink: dict[int, int] = defaultdict(int)
+        downlink: dict[int, int] = defaultdict(int)
+
+        # Собираем uplink/downlink из API
+        for stat in api_stats:
+            # stat.name формат: "123.username"
+            # stat.link: "uplink" или "downlink"
+            try:
+                uid = int(stat.name.split(".")[0])
+            except (ValueError, IndexError):
+                continue
+
+            if stat.link == "uplink":
+                uplink[uid] += stat.value
+            elif stat.link == "downlink":
+                downlink[uid] += stat.value
+
+        # Формируем метаданные
+        meta: dict[int, dict] = {}
+        all_uids = set(uplink.keys()) | set(downlink.keys())
+
+        for uid in all_uids:
+            meta[uid] = {
+                "uplink": uplink.get(uid, 0),
+                "downlink": downlink.get(uid, 0),
+                "client_name": "sing-box",
+            }
+
+        return meta
+
     async def get_logs(self, include_buffer: bool = True):
         if include_buffer:
             for line in self._runner.get_buffer():

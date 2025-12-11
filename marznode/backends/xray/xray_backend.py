@@ -155,6 +155,60 @@ class XrayBackend(VPNBackend):
             stats[uid] += stat.value
         return stats
 
+    async def get_users_meta(self) -> dict[int, dict]:
+        """
+        Возвращает метаданные пользователей: uplink/downlink из API и IP из логов.
+        """
+        try:
+            stats = await self._api.get_users_stats(reset=False)
+        except OSError:
+            stats = []
+
+        uplink: dict[int, int] = defaultdict(int)
+        downlink: dict[int, int] = defaultdict(int)
+
+        # Собираем uplink/downlink из API
+        for stat in stats:
+            # stat.name формат: "user>>>123.username>>>traffic>>>uplink" или "downlink"
+            parts = stat.name.split(">>>")
+            if len(parts) < 4:
+                continue
+            
+            user_email = parts[1]  # "123.username"
+            link = parts[3]        # "uplink" / "downlink"
+            
+            try:
+                uid = int(user_email.split(".")[0])
+            except (ValueError, IndexError):
+                continue
+            
+            if link == "uplink":
+                uplink[uid] += stat.value
+            elif link == "downlink":
+                downlink[uid] += stat.value
+
+        # Получаем метаданные из логов (IP адреса)
+        log_meta = self._runner.get_last_meta()
+
+        # Объединяем данные
+        meta: dict[int, dict] = {}
+        all_uids = set(uplink.keys()) | set(downlink.keys()) | set(log_meta.keys())
+        
+        for uid in all_uids:
+            user_meta = {
+                "uplink": uplink.get(uid, 0),
+                "downlink": downlink.get(uid, 0),
+                "client_name": "xray",
+            }
+            
+            # Добавляем IP из логов, если он есть
+            if uid in log_meta and "remote_ip" in log_meta[uid]:
+                user_meta["remote_ip"] = log_meta[uid]["remote_ip"]
+            
+            meta[uid] = user_meta
+
+        return meta
+
     async def get_logs(self, include_buffer: bool = True):
         if include_buffer:
             for line in self._runner.get_buffer():
