@@ -117,7 +117,7 @@ class SingBoxBackend(VPNBackend):
         for tag in self._inbound_tags:
             self._storage.remove_inbound(tag)
         self._inbound_tags = set()
-        self._inbounds = set()
+        self._inbounds = list()
 
     async def restart(self, backend_config: str | None) -> list[Inbound] | None:
         async with self._restart_lock:

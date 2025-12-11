@@ -45,7 +45,7 @@ class MarzService(MarzServiceBase):
         for backend in self._backends.values():
             if backend.contains_tag(inbound_tag):
                 return backend
-        raise
+        raise GRPCError(Status.NOT_FOUND, f"inbound `{inbound_tag}` not found")
 
     async def _add_user(self, user: User, inbounds: list[Inbound]):
         for inbound in inbounds:
@@ -215,8 +215,8 @@ class MarzService(MarzServiceBase):
         self, stream: Stream[BackendLogsRequest, LogLine]
     ) -> None:
         req = await stream.recv_message()
-        if req.backend_name not in self._backends:
-            raise
+        if req is None or req.backend_name not in self._backends:
+            raise GRPCError(Status.NOT_FOUND, "Backend doesn't exist")
         async for line in self._backends[req.backend_name].get_logs(req.include_buffer):
             await stream.send_message(LogLine(line=line))
 
@@ -224,6 +224,8 @@ class MarzService(MarzServiceBase):
         self, stream: Stream[Backend, BackendConfig_pb2]
     ) -> None:
         req = await stream.recv_message()
+        if req is None or req.name not in self._backends:
+            raise GRPCError(Status.NOT_FOUND, "Backend doesn't exist")
         backend = self._backends[req.name]
         config = backend.get_config()
         await stream.send_message(
@@ -240,7 +242,7 @@ class MarzService(MarzServiceBase):
 
     async def GetBackendStats(self, stream: Stream[Backend, BackendStats]):
         backend = await stream.recv_message()
-        if backend.name not in self._backends.keys():
+        if backend is None or backend.name not in self._backends.keys():
             raise GRPCError(
                 Status.NOT_FOUND,
                 "Backend doesn't exist",

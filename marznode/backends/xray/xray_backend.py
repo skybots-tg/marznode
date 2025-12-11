@@ -103,7 +103,7 @@ class XrayBackend(VPNBackend):
         for tag in self._inbound_tags:
             self._storage.remove_inbound(tag)
         self._inbound_tags = set()
-        self._inbounds = set()
+        self._inbounds = list()
 
     async def restart(self, backend_config: str | None) -> list[Inbound] | None:
         # xray_config = backend_config if backend_config else self._config
