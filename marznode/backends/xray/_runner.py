@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import logging
 import re
+import time
 from collections import deque, defaultdict
 
 from anyio import create_memory_object_stream, ClosedResourceError, BrokenResourceError
@@ -15,14 +16,21 @@ from ._utils import get_version
 logger = logging.getLogger(__name__)
 
 # Регулярное выражение для парсинга access логов Xray
-# Ищем email и IP в различных форматах логов
+# Формат: "from IP:PORT ... email: UID.username" или "from tcp:IP:PORT ... email: UID.username"
+# Сначала идет IP, потом email (порядок важен!)
 ACCESS_LOG_RE = re.compile(
-    r"email[:\s]+(?P<email>[\w.\-@]+).*?(?:from|ip[:\s]|remote[:\s])\s*(?P<ip>[0-9a-fA-F:.\[\]]+)"
+    r"from\s+(?:tcp:|udp:)?(?P<ip>[0-9a-fA-F:.]+):\d+\s+.*?\s+email:\s+(?P<email>[\w.\-@]+)",
+    re.IGNORECASE
 )
 
 
 class XrayCore:
     """runs and captures xray logs"""
+    
+    # Настройки для оптимизации работы с большими объемами данных
+    MAX_META_ENTRIES = 10000  # Максимальное количество записей в кэше метаданных
+    META_TTL = 3600  # Время жизни записи в секундах (1 час)
+    CLEANUP_INTERVAL = 300  # Интервал очистки старых записей (5 минут)
 
     def __init__(self, executable_path: str, assets_path: str):
         self.executable_path = executable_path
@@ -37,8 +45,10 @@ class XrayCore:
         self._env = {"XRAY_LOCATION_ASSET": assets_path}
         self.stop_event = asyncio.Event()
         
-        # Словарь для хранения метаданных пользователей (IP, user_agent и т.д.)
-        self._last_meta: dict[int, dict] = defaultdict(dict)
+        # Словарь для хранения метаданных пользователей (IP, timestamp)
+        # Формат: {uid: {"remote_ip": "1.2.3.4", "timestamp": 1234567890}}
+        self._last_meta: dict[int, dict] = {}
+        self._last_cleanup = time.time()
 
         atexit.register(lambda: asyncio.run(self.stop()) if self.running else None)
 
@@ -105,9 +115,58 @@ class XrayCore:
         finally:
             self.restarting = False
 
+    def _cleanup_old_meta(self):
+        """Очищает устаревшие записи метаданных для экономии памяти"""
+        current_time = time.time()
+        
+        # Проверяем, нужна ли очистка
+        if current_time - self._last_cleanup < self.CLEANUP_INTERVAL:
+            return
+        
+        self._last_cleanup = current_time
+        cutoff_time = current_time - self.META_TTL
+        
+        # Удаляем устаревшие записи
+        expired_uids = [
+            uid for uid, meta in self._last_meta.items()
+            if meta.get("timestamp", 0) < cutoff_time
+        ]
+        
+        for uid in expired_uids:
+            del self._last_meta[uid]
+        
+        if expired_uids:
+            logger.debug(f"Cleaned up {len(expired_uids)} expired metadata entries")
+        
+        # Если превышен лимит записей, удаляем самые старые
+        if len(self._last_meta) > self.MAX_META_ENTRIES:
+            # Сортируем по timestamp и удаляем самые старые
+            sorted_items = sorted(
+                self._last_meta.items(),
+                key=lambda x: x[1].get("timestamp", 0)
+            )
+            to_remove = len(self._last_meta) - self.MAX_META_ENTRIES
+            for uid, _ in sorted_items[:to_remove]:
+                del self._last_meta[uid]
+            
+            logger.warning(
+                f"Meta cache exceeded limit ({self.MAX_META_ENTRIES}), "
+                f"removed {to_remove} oldest entries"
+            )
+    
     def _handle_log_line(self, line: str):
-        """Парсит строку лога для извлечения email и IP пользователя"""
+        """Парсит строку лога для извлечения email и IP пользователя
+        
+        Оптимизировано для работы с большими объемами данных:
+        - Быстрый парсинг с помощью регулярного выражения
+        - Автоматическая очистка старых записей
+        - Ограничение размера кэша метаданных
+        """
         try:
+            # Быстрая проверка - содержит ли строка ключевые слова
+            if "email:" not in line or "from" not in line:
+                return
+            
             match = ACCESS_LOG_RE.search(line)
             if not match:
                 return
@@ -115,17 +174,27 @@ class XrayCore:
             email = match.group("email")
             ip = match.group("ip")
             
-            # Извлекаем uid из email (формат: "uid.username")
+            # Извлекаем uid из email (формат: "uid.username" или просто "uid")
             try:
                 uid = int(email.split(".")[0])
             except (ValueError, IndexError):
+                # Если не удалось извлечь uid, пропускаем
                 return
             
-            # Сохраняем IP в метаданные пользователя
-            self._last_meta[uid]["remote_ip"] = ip
+            # Сохраняем IP и timestamp в метаданные пользователя
+            current_time = time.time()
+            self._last_meta[uid] = {
+                "remote_ip": ip,
+                "timestamp": current_time
+            }
+            
+            # Периодически очищаем старые записи
+            self._cleanup_old_meta()
+            
             logger.debug(f"Captured IP {ip} for user {uid} from access log")
             
         except Exception as e:
+            # Не логируем каждую ошибку, чтобы не засорять логи
             logger.debug(f"Error parsing access log line: {e}")
 
     async def __capture_process_logs(self):
@@ -177,8 +246,17 @@ class XrayCore:
         return self._logs_buffer.copy()
     
     def get_last_meta(self) -> dict[int, dict]:
-        """Возвращает последние метаданные по пользователям (IP, user_agent и т.д.)"""
-        return self._last_meta
+        """Возвращает последние метаданные по пользователям (IP, user_agent и т.д.)
+        
+        Возвращает копию словаря без служебных полей (timestamp).
+        Оптимизировано для работы с большими объемами данных.
+        """
+        # Возвращаем только remote_ip, исключая timestamp
+        return {
+            uid: {"remote_ip": meta["remote_ip"]}
+            for uid, meta in self._last_meta.items()
+            if "remote_ip" in meta
+        }
 
     @property
     def running(self):
