@@ -17,3 +17,4 @@ services:
 
     volumes:
       - /var/lib/marznode:/var/lib/marznode
+      - ./marznode:/app/marznode:ro  # Монтируем локальный код (read-only)
