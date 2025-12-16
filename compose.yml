@@ -17,4 +17,5 @@ services:
 
     volumes:
       - /var/lib/marznode:/var/lib/marznode
-      - ./marznode:/app/marznode:ro  # Монтируем локальный код (read-only)
+      - ./marznode/backends/xray/_runner.py:/app/marznode/backends/xray/_runner.py:ro
+      - ./marznode/backends/xray/xray_backend.py:/app/marznode/backends/xray/xray_backend.py:ro
