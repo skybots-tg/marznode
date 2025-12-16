@@ -54,9 +54,23 @@ def check_xray_config():
     """Проверяет конфигурацию Xray на наличие access логов"""
     print_header("1. Проверка конфигурации Xray")
     
-    config_path = Path("xray_config.json")
-    if not config_path.exists():
-        print_error(f"Конфигурационный файл {config_path} не найден")
+    # Проверяем оба возможных пути (для Docker и локального запуска)
+    config_paths = [
+        Path("/var/lib/marznode/xray_config.json"),  # Docker volume
+        Path("xray_config.json"),  # Локальный файл
+        Path("/opt/marznode/xray_config.json"),  # Альтернативный путь
+    ]
+    
+    config_path = None
+    for path in config_paths:
+        if path.exists():
+            config_path = path
+            break
+    
+    if not config_path:
+        print_error(f"Конфигурационный файл не найден ни в одном из путей:")
+        for path in config_paths:
+            print(f"  - {path}")
         return False
     
     try:
