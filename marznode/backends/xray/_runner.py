@@ -231,7 +231,13 @@ class XrayCore:
             capture_stream(process.stderr), capture_stream(process.stdout)
         )
 
-        await process.communicate()
+        # Завершаем процесс, если он еще существует
+        try:
+            if process and process.returncode is None:
+                await process.communicate()
+        except Exception as e:
+            logger.debug(f"Error communicating with process: {e}")
+        
         logger.warning("Xray stopped/died")
         self.stop_event.set()
 
