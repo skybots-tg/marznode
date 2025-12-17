@@ -342,16 +342,20 @@ class XrayCore:
         
         Возвращает копию словаря без служебных полей (timestamp).
         Оптимизировано для работы с большими объемами данных.
-        """
-        # Сначала парсим файл логов, если он есть
-        self._parse_access_log_file()
         
+        Метаданные собираются в реальном времени из stderr через __capture_process_logs
+        """
         # Возвращаем только remote_ip, исключая timestamp
-        return {
+        result = {
             uid: {"remote_ip": meta["remote_ip"]}
             for uid, meta in self._last_meta.items()
             if "remote_ip" in meta
         }
+        
+        if result:
+            logger.debug(f"Returning metadata for {len(result)} users from in-memory cache")
+        
+        return result
 
     @property
     def running(self):
