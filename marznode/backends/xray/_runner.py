@@ -56,8 +56,18 @@ class XrayCore:
         if self.running is True:
             raise RuntimeError("Xray is started already")
 
+        # Настраиваем логирование
+        if "log" not in config:
+            config["log"] = {}
+        
         if config.get("log", {}).get("loglevel") in ("none", "error"):
             config["log"]["loglevel"] = "warning"
+        
+        # Добавляем access логи для отслеживания IP адресов
+        if "access" not in config["log"]:
+            # Используем stderr для access логов, чтобы мы могли их читать
+            config["log"]["access"] = ""  # Пустая строка = stderr
+            logger.info("Enabled access logging to stderr for IP tracking")
 
         cmd = [self.executable_path, "run", "-config", "stdin:"]
         self._process = await asyncio.create_subprocess_shell(
