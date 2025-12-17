@@ -344,7 +344,11 @@ class XrayCore:
         Оптимизировано для работы с большими объемами данных.
         
         Метаданные собираются в реальном времени из stderr через __capture_process_logs
+        и дополнительно из файла access.log
         """
+        # Сначала читаем файл логов для получения свежих данных
+        self._parse_access_log_file()
+        
         # Возвращаем только remote_ip, исключая timestamp
         result = {
             uid: {"remote_ip": meta["remote_ip"]}
@@ -353,7 +357,7 @@ class XrayCore:
         }
         
         if result:
-            logger.debug(f"Returning metadata for {len(result)} users from in-memory cache")
+            logger.debug(f"Returning metadata for {len(result)} users from cache")
         
         return result
 
