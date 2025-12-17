@@ -251,12 +251,54 @@ class XrayCore:
         the buffer is never cleared in case logs from xray's exit are useful"""
         return self._logs_buffer.copy()
     
+    def _parse_access_log_file(self, log_path: str = "/var/log/xray/access.log", max_lines: int = 500):
+        """Парсит файл access.log для извлечения IP адресов пользователей
+        
+        Args:
+            log_path: путь к файлу access.log
+            max_lines: максимальное количество строк для чтения (с конца файла)
+        """
+        try:
+            import os
+            if not os.path.exists(log_path):
+                logger.debug(f"Access log file not found: {log_path}")
+                return
+            
+            # Читаем последние N строк файла
+            with open(log_path, 'rb') as f:
+                # Получаем размер файла
+                f.seek(0, os.SEEK_END)
+                file_size = f.tell()
+                
+                # Если файл маленький, читаем весь
+                if file_size < max_lines * 200:  # ~200 bytes per line average
+                    f.seek(0)
+                    lines = f.readlines()
+                else:
+                    # Читаем последние max_lines строк
+                    f.seek(max(0, file_size - max_lines * 200))
+                    lines = f.readlines()[1:]  # Пропускаем первую неполную строку
+                
+                # Парсим последние строки
+                for line_bytes in lines[-max_lines:]:
+                    try:
+                        line = line_bytes.decode('utf-8', errors='ignore').strip()
+                        self._handle_log_line(line)
+                    except Exception as e:
+                        logger.debug(f"Error parsing log line: {e}")
+                        
+        except Exception as e:
+            logger.debug(f"Error reading access log file: {e}")
+    
     def get_last_meta(self) -> dict[int, dict]:
         """Возвращает последние метаданные по пользователям (IP, user_agent и т.д.)
         
         Возвращает копию словаря без служебных полей (timestamp).
         Оптимизировано для работы с большими объемами данных.
         """
+        # Сначала парсим файл логов, если он есть
+        self._parse_access_log_file()
+        
         # Возвращаем только remote_ip, исключая timestamp
         return {
             uid: {"remote_ip": meta["remote_ip"]}
