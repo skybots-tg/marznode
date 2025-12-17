@@ -68,11 +68,10 @@ class XrayCore:
         if config.get("log", {}).get("loglevel") in ("none", "error"):
             config["log"]["loglevel"] = "warning"
         
-        # Добавляем access логи для отслеживания IP адресов
-        if "access" not in config["log"]:
-            # Пишем логи в файл И в stderr
-            config["log"]["access"] = "/var/log/xray/access.log"
-            logger.info("Enabled access logging to /var/log/xray/access.log for IP tracking")
+        # ВСЕГДА устанавливаем access логи для отслеживания IP адресов
+        # Перезаписываем существующие настройки
+        config["log"]["access"] = "/var/log/xray/access.log"
+        logger.info(f"Access logging configured: {config['log'].get('access')}")
 
         cmd = [self.executable_path, "run", "-config", "stdin:"]
         self._process = await asyncio.create_subprocess_shell(
@@ -87,6 +86,12 @@ class XrayCore:
         self._process.stdin.close()
         await self._process.stdin.wait_closed()
         logger.info("Xray core %s started", self.version)
+        
+        # Проверяем, что директория для логов существует и доступна для записи
+        if os.path.exists(log_dir):
+            logger.info(f"Log directory exists: {log_dir}, writable: {os.access(log_dir, os.W_OK)}")
+        else:
+            logger.warning(f"Log directory not found: {log_dir}")
 
         logs_stm = self.get_logs_stm()
         asyncio.create_task(self.__capture_process_logs())
@@ -281,24 +286,10 @@ class XrayCore:
         try:
             import os
             
-            logger.info(f"Attempting to read access log: {log_path}")
-            
             if not os.path.exists(log_path):
-                logger.warning(f"Access log file not found: {log_path}")
-                # Пробуем найти файл в других местах
-                alt_paths = [
-                    "/var/log/xray/access.log",
-                    "/var/lib/marznode/xray_access.log",
-                    "/app/xray_access.log",
-                ]
-                for alt_path in alt_paths:
-                    if os.path.exists(alt_path):
-                        logger.info(f"Found alternative log file: {alt_path}")
-                        log_path = alt_path
-                        break
-                else:
-                    logger.error(f"No access log file found in any location")
-                    return
+                # Файл еще не создан - это нормально для только что запущенного Xray
+                logger.debug(f"Access log file not found yet: {log_path} (waiting for connections)")
+                return
             
             # Читаем последние N строк файла
             with open(log_path, 'rb') as f:
