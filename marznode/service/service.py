@@ -136,6 +136,7 @@ class MarzService(MarzServiceBase):
         await stream.send_message(Empty())
 
     async def FetchUsersStats(self, stream: Stream[Empty, UsersStats]) -> None:
+        logger.info("=== FetchUsersStats CALLED ===")
         await stream.recv_message()
         
         # суммарный трафик по всем backend'ам
@@ -146,16 +147,24 @@ class MarzService(MarzServiceBase):
         # метаданные по пользователям
         meta: dict[int, dict[str, str]] = {}
 
+        logger.info(f"Processing {len(self._backends)} backends")
+        
         for backend_name, backend in self._backends.items():
+            logger.info(f"Processing backend: {backend_name}, type: {type(backend).__name__}")
+            
             # 1) как и раньше — usage
             stats = await backend.get_usages()
+            logger.info(f"  Got usage stats for {len(stats)} users")
             for uid, usage in stats.items():
                 total_usage[uid] += usage
 
             # 2) необязательные метаданные
             get_meta = getattr(backend, "get_users_meta", None)
             if not get_meta:
+                logger.warning(f"  Backend {backend_name} has NO get_users_meta method!")
                 continue
+            
+            logger.info(f"  Backend {backend_name} has get_users_meta, calling it...")
 
             try:
                 backend_meta = await get_meta()
