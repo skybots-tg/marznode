@@ -154,22 +154,25 @@ class XrayCore:
                 f"removed {to_remove} oldest entries"
             )
     
-    def _handle_log_line(self, line: str):
+    def _handle_log_line(self, line: str) -> bool:
         """Парсит строку лога для извлечения email и IP пользователя
         
         Оптимизировано для работы с большими объемами данных:
         - Быстрый парсинг с помощью регулярного выражения
         - Автоматическая очистка старых записей
         - Ограничение размера кэша метаданных
+        
+        Returns:
+            True если строка успешно распарсена, False иначе
         """
         try:
             # Быстрая проверка - содержит ли строка ключевые слова
             if "email:" not in line or "from" not in line:
-                return
+                return False
             
             match = ACCESS_LOG_RE.search(line)
             if not match:
-                return
+                return False
             
             email = match.group("email")
             ip = match.group("ip")
@@ -179,7 +182,7 @@ class XrayCore:
                 uid = int(email.split(".")[0])
             except (ValueError, IndexError):
                 # Если не удалось извлечь uid, пропускаем
-                return
+                return False
             
             # Сохраняем IP и timestamp в метаданные пользователя
             current_time = time.time()
@@ -192,10 +195,12 @@ class XrayCore:
             self._cleanup_old_meta()
             
             logger.debug(f"Captured IP {ip} for user {uid} from access log")
+            return True
             
         except Exception as e:
             # Не логируем каждую ошибку, чтобы не засорять логи
             logger.debug(f"Error parsing access log line: {e}")
+            return False
 
     async def __capture_process_logs(self):
         """capture the logs, push it into the stream, and store it in the deck
@@ -260,15 +265,36 @@ class XrayCore:
         """
         try:
             import os
+            
+            logger.info(f"Attempting to read access log: {log_path}")
+            
             if not os.path.exists(log_path):
-                logger.debug(f"Access log file not found: {log_path}")
-                return
+                logger.warning(f"Access log file not found: {log_path}")
+                # Пробуем найти файл в других местах
+                alt_paths = [
+                    "/var/log/xray/access.log",
+                    "/var/lib/marznode/xray_access.log",
+                    "/app/xray_access.log",
+                ]
+                for alt_path in alt_paths:
+                    if os.path.exists(alt_path):
+                        logger.info(f"Found alternative log file: {alt_path}")
+                        log_path = alt_path
+                        break
+                else:
+                    logger.error(f"No access log file found in any location")
+                    return
             
             # Читаем последние N строк файла
             with open(log_path, 'rb') as f:
                 # Получаем размер файла
                 f.seek(0, os.SEEK_END)
                 file_size = f.tell()
+                logger.info(f"Access log file size: {file_size} bytes")
+                
+                if file_size == 0:
+                    logger.warning("Access log file is empty")
+                    return
                 
                 # Если файл маленький, читаем весь
                 if file_size < max_lines * 200:  # ~200 bytes per line average
@@ -279,16 +305,27 @@ class XrayCore:
                     f.seek(max(0, file_size - max_lines * 200))
                     lines = f.readlines()[1:]  # Пропускаем первую неполную строку
                 
+                logger.info(f"Read {len(lines)} lines from access log")
+                
+                # Показываем пример строки для отладки
+                if lines:
+                    sample_line = lines[-1].decode('utf-8', errors='ignore').strip()
+                    logger.info(f"Sample log line: {sample_line[:200]}")
+                
                 # Парсим последние строки
+                parsed_count = 0
                 for line_bytes in lines[-max_lines:]:
                     try:
                         line = line_bytes.decode('utf-8', errors='ignore').strip()
-                        self._handle_log_line(line)
+                        if self._handle_log_line(line):
+                            parsed_count += 1
                     except Exception as e:
                         logger.debug(f"Error parsing log line: {e}")
+                
+                logger.info(f"Successfully parsed {parsed_count} log lines with user data")
                         
         except Exception as e:
-            logger.debug(f"Error reading access log file: {e}")
+            logger.error(f"Error reading access log file: {e}", exc_info=True)
     
     def get_last_meta(self) -> dict[int, dict]:
         """Возвращает последние метаданные по пользователям (IP, user_agent и т.д.)
