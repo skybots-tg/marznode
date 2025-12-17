@@ -2,5 +2,6 @@
 
 from .base import BaseStorage
 from .memory import MemoryStorage
+from .devices import DeviceStorage
 
-__all__ = ["BaseStorage", "MemoryStorage"]
+__all__ = ["BaseStorage", "MemoryStorage", "DeviceStorage"]

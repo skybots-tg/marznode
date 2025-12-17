@@ -17,5 +17,10 @@ services:
 
     volumes:
       - /var/lib/marznode:/var/lib/marznode
+      - ./marznode/__init__.py:/app/marznode/__init__.py:ro
+      - ./marznode/marznode.py:/app/marznode/marznode.py:ro
+      - ./marznode/service/service.py:/app/marznode/service/service.py:ro
+      - ./marznode/storage/devices.py:/app/marznode/storage/devices.py:ro
+      - ./marznode/storage/__init__.py:/app/marznode/storage/__init__.py:ro
       - ./marznode/backends/xray/_runner.py:/app/marznode/backends/xray/_runner.py:ro
       - ./marznode/backends/xray/xray_backend.py:/app/marznode/backends/xray/xray_backend.py:ro

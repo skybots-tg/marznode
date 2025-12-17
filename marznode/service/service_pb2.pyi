@@ -132,3 +132,51 @@ class BackendStats(_message.Message):
     RUNNING_FIELD_NUMBER: _ClassVar[int]
     running: bool
     def __init__(self, running: bool = ...) -> None: ...
+
+class DeviceInfo(_message.Message):
+    __slots__ = ("remote_ip", "client_name", "user_agent", "protocol", "tls_fingerprint", "first_seen", "last_seen", "total_usage", "uplink", "downlink", "is_active")
+    REMOTE_IP_FIELD_NUMBER: _ClassVar[int]
+    CLIENT_NAME_FIELD_NUMBER: _ClassVar[int]
+    USER_AGENT_FIELD_NUMBER: _ClassVar[int]
+    PROTOCOL_FIELD_NUMBER: _ClassVar[int]
+    TLS_FINGERPRINT_FIELD_NUMBER: _ClassVar[int]
+    FIRST_SEEN_FIELD_NUMBER: _ClassVar[int]
+    LAST_SEEN_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_USAGE_FIELD_NUMBER: _ClassVar[int]
+    UPLINK_FIELD_NUMBER: _ClassVar[int]
+    DOWNLINK_FIELD_NUMBER: _ClassVar[int]
+    IS_ACTIVE_FIELD_NUMBER: _ClassVar[int]
+    remote_ip: str
+    client_name: str
+    user_agent: str
+    protocol: str
+    tls_fingerprint: str
+    first_seen: int
+    last_seen: int
+    total_usage: int
+    uplink: int
+    downlink: int
+    is_active: bool
+    def __init__(self, remote_ip: _Optional[str] = ..., client_name: _Optional[str] = ..., user_agent: _Optional[str] = ..., protocol: _Optional[str] = ..., tls_fingerprint: _Optional[str] = ..., first_seen: _Optional[int] = ..., last_seen: _Optional[int] = ..., total_usage: _Optional[int] = ..., uplink: _Optional[int] = ..., downlink: _Optional[int] = ..., is_active: bool = ...) -> None: ...
+
+class UserDevicesHistory(_message.Message):
+    __slots__ = ("uid", "devices")
+    UID_FIELD_NUMBER: _ClassVar[int]
+    DEVICES_FIELD_NUMBER: _ClassVar[int]
+    uid: int
+    devices: _containers.RepeatedCompositeFieldContainer[DeviceInfo]
+    def __init__(self, uid: _Optional[int] = ..., devices: _Optional[_Iterable[_Union[DeviceInfo, _Mapping]]] = ...) -> None: ...
+
+class UserDevicesRequest(_message.Message):
+    __slots__ = ("uid", "active_only")
+    UID_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_ONLY_FIELD_NUMBER: _ClassVar[int]
+    uid: int
+    active_only: bool
+    def __init__(self, uid: _Optional[int] = ..., active_only: bool = ...) -> None: ...
+
+class AllUsersDevices(_message.Message):
+    __slots__ = ("users",)
+    USERS_FIELD_NUMBER: _ClassVar[int]
+    users: _containers.RepeatedCompositeFieldContainer[UserDevicesHistory]
+    def __init__(self, users: _Optional[_Iterable[_Union[UserDevicesHistory, _Mapping]]] = ...) -> None: ...

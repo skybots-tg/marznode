@@ -11,7 +11,7 @@ from grpclib import GRPCError, Status
 from grpclib.server import Stream
 
 from marznode.backends.abstract_backend import VPNBackend
-from marznode.storage import BaseStorage
+from marznode.storage import BaseStorage, DeviceStorage
 from .service_grpc import MarzServiceBase
 from .service_pb2 import (
     BackendConfig as BackendConfig_pb2,
@@ -28,6 +28,10 @@ from .service_pb2 import (
     Inbound,
     UsersStats,
     LogLine,
+    UserDevicesRequest,
+    UserDevicesHistory,
+    AllUsersDevices,
+    DeviceInfo as DeviceInfo_pb2,
 )
 from ..models import User, Inbound as InboundModel
 
@@ -37,9 +41,10 @@ logger = logging.getLogger(__name__)
 class MarzService(MarzServiceBase):
     """Add/Update/Delete users based on calls from the client"""
 
-    def __init__(self, storage: BaseStorage, backends: dict[str, VPNBackend]):
+    def __init__(self, storage: BaseStorage, backends: dict[str, VPNBackend], device_storage: DeviceStorage = None):
         self._backends = backends
         self._storage = storage
+        self._device_storage = device_storage or DeviceStorage()
 
     def _resolve_tag(self, inbound_tag: str) -> VPNBackend:
         for backend in self._backends.values():
@@ -199,6 +204,26 @@ class MarzService(MarzServiceBase):
                     if info.get(key) and not user_meta.get(key):
                         user_meta[key] = info[key]
 
+        # Сохраняем данные в историю устройств
+        logger.info("=== Saving device history ===")
+        for uid, usage in total_usage.items():
+            info = meta.get(uid, {})
+            remote_ip = info.get("remote_ip", "")
+            client_name = info.get("client_name", "unknown")
+            
+            if remote_ip:  # Сохраняем только если есть IP
+                self._device_storage.update_device(
+                    uid=uid,
+                    remote_ip=remote_ip,
+                    client_name=client_name,
+                    current_usage=usage,
+                    meta=info
+                )
+                logger.debug(f"Saved device for user {uid}: {remote_ip}:{client_name}")
+        
+        # Отмечаем неактивные устройства
+        self._device_storage.mark_inactive_devices()
+        
         # собираем ответ
         logger.debug(f"Total usage: {total_usage}, Meta: {meta}")
         user_stats = []
@@ -270,3 +295,81 @@ class MarzService(MarzServiceBase):
             )
         running = self._backends[backend.name].running
         await stream.send_message(BackendStats(running=running))
+    
+    async def FetchUserDevices(
+        self, stream: Stream[UserDevicesRequest, UserDevicesHistory]
+    ) -> None:
+        """Получить историю устройств конкретного пользователя"""
+        request = await stream.recv_message()
+        logger.info(f"=== FetchUserDevices CALLED for user {request.uid} ===")
+        
+        active_only = request.active_only if request.active_only else False
+        devices = self._device_storage.get_user_devices(request.uid, active_only=active_only)
+        
+        # Конвертируем в protobuf формат
+        device_list = []
+        for device in devices:
+            device_list.append(
+                DeviceInfo_pb2(
+                    remote_ip=device.remote_ip,
+                    client_name=device.client_name,
+                    user_agent=device.user_agent,
+                    protocol=device.protocol,
+                    tls_fingerprint=device.tls_fingerprint,
+                    first_seen=device.first_seen,
+                    last_seen=device.last_seen,
+                    total_usage=device.total_usage,
+                    uplink=device.uplink,
+                    downlink=device.downlink,
+                    is_active=device.is_active,
+                )
+            )
+        
+        logger.info(
+            f"Returning {len(device_list)} devices for user {request.uid} "
+            f"(active_only={active_only})"
+        )
+        
+        await stream.send_message(
+            UserDevicesHistory(uid=request.uid, devices=device_list)
+        )
+    
+    async def FetchAllDevices(
+        self, stream: Stream[Empty, AllUsersDevices]
+    ) -> None:
+        """Получить историю устройств всех пользователей"""
+        await stream.recv_message()
+        logger.info("=== FetchAllDevices CALLED ===")
+        
+        all_devices = self._device_storage.get_all_devices()
+        
+        # Конвертируем в protobuf формат
+        users_list = []
+        for uid, devices in all_devices.items():
+            device_list = []
+            for device in devices:
+                device_list.append(
+                    DeviceInfo_pb2(
+                        remote_ip=device.remote_ip,
+                        client_name=device.client_name,
+                        user_agent=device.user_agent,
+                        protocol=device.protocol,
+                        tls_fingerprint=device.tls_fingerprint,
+                        first_seen=device.first_seen,
+                        last_seen=device.last_seen,
+                        total_usage=device.total_usage,
+                        uplink=device.uplink,
+                        downlink=device.downlink,
+                        is_active=device.is_active,
+                    )
+                )
+            users_list.append(
+                UserDevicesHistory(uid=uid, devices=device_list)
+            )
+        
+        logger.info(
+            f"Returning device history for {len(users_list)} users, "
+            f"total devices: {sum(len(u.devices) for u in users_list)}"
+        )
+        
+        await stream.send_message(AllUsersDevices(users=users_list))
