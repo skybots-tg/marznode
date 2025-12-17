@@ -12,12 +12,22 @@ WORKDIR /app
 
 COPY . .
 
-RUN mkdir /etc/init.d/
+RUN mkdir -p /etc/init.d/ /usr/local/bin /usr/local/lib/xray
 
-RUN apk add --no-cache curl unzip
+# Install Xray
+RUN apk add --no-cache curl unzip && \
+    XRAY_VERSION=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | grep '"tag_name":' | sed -E 's/.*"v([^"]+)".*/\1/') && \
+    curl -L "https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip" -o /tmp/xray.zip && \
+    unzip -o /tmp/xray.zip -d /tmp/xray && \
+    mv /tmp/xray/xray /usr/local/bin/xray && \
+    chmod +x /usr/local/bin/xray && \
+    mkdir -p /usr/local/lib/xray && \
+    mv /tmp/xray/geoip.dat /tmp/xray/geosite.dat /usr/local/lib/xray/ 2>/dev/null || true && \
+    rm -rf /tmp/xray /tmp/xray.zip
 
-RUN curl -L https://raw.githubusercontent.com/XTLS/alpinelinux-install-xray/main/install-release.sh | ash
-
-RUN apk add --no-cache alpine-sdk libffi-dev && pip install --no-cache-dir -r /app/requirements.txt && apk del -r alpine-sdk libffi-dev curl unzip
+# Install Python dependencies
+RUN apk add --no-cache alpine-sdk libffi-dev && \
+    pip install --no-cache-dir -r /app/requirements.txt && \
+    apk del -r alpine-sdk libffi-dev curl unzip
 
 CMD ["python3", "marznode.py"]
