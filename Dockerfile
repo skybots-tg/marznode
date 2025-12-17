@@ -10,7 +10,7 @@ COPY --from=hysteria-image /usr/local/bin/hysteria /usr/local/bin/hysteria
 COPY --from=sing-box-image /usr/local/bin/sing-box /usr/local/bin/sing-box
 
 # Create necessary directories
-RUN mkdir -p /etc/init.d/ /usr/local/bin /usr/local/lib/xray
+RUN mkdir -p /etc/init.d/ /usr/local/bin /usr/local/lib/xray /var/log/xray
 
 # Install Xray (cached layer - rarely changes)
 RUN apk add --no-cache curl unzip && \

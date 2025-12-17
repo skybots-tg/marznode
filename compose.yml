@@ -17,7 +17,7 @@ services:
 
     volumes:
       - /var/lib/marznode:/var/lib/marznode
-      - /var/log/xray:/var/log/xray:ro
+      - /var/log/xray:/var/log/xray
       - ./marznode/__init__.py:/app/marznode/__init__.py:ro
       - ./marznode/marznode.py:/app/marznode/marznode.py:ro
       - ./marznode/service/service.py:/app/marznode/service/service.py:ro

@@ -56,6 +56,11 @@ class XrayCore:
         if self.running is True:
             raise RuntimeError("Xray is started already")
 
+        # Создаём директорию для логов, если её нет
+        import os
+        log_dir = "/var/log/xray"
+        os.makedirs(log_dir, exist_ok=True)
+
         # Настраиваем логирование
         if "log" not in config:
             config["log"] = {}
@@ -65,9 +70,9 @@ class XrayCore:
         
         # Добавляем access логи для отслеживания IP адресов
         if "access" not in config["log"]:
-            # Используем stderr для access логов, чтобы мы могли их читать
-            config["log"]["access"] = ""  # Пустая строка = stderr
-            logger.info("Enabled access logging to stderr for IP tracking")
+            # Пишем логи в файл И в stderr
+            config["log"]["access"] = "/var/log/xray/access.log"
+            logger.info("Enabled access logging to /var/log/xray/access.log for IP tracking")
 
         cmd = [self.executable_path, "run", "-config", "stdin:"]
         self._process = await asyncio.create_subprocess_shell(
