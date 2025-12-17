@@ -151,6 +151,11 @@ class XrayConfig(dict):
                     pvk = tls_settings.get("privateKey")
 
                     x25519 = get_x25519(XRAY_EXECUTABLE_PATH, pvk)
+                    if x25519 is None:
+                        raise RuntimeError(
+                            f"Failed to generate x25519 keys for inbound {inbound.get('tag', 'unknown')}. "
+                            f"Check that Xray is properly installed at {XRAY_EXECUTABLE_PATH}"
+                        )
                     settings["pbk"] = x25519["public_key"]
 
                     settings["sid"] = tls_settings.get("shortIds", [""])[0]
