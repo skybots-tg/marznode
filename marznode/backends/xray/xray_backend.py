@@ -189,6 +189,11 @@ class XrayBackend(VPNBackend):
 
         # Получаем метаданные из логов (IP адреса)
         log_meta = self._runner.get_last_meta()
+        
+        logger.info(f"=== XrayBackend.get_users_meta() ===")
+        logger.info(f"Log metadata from access logs: {len(log_meta)} users")
+        for uid, data in list(log_meta.items())[:3]:  # Показываем первые 3
+            logger.info(f"  User {uid}: {data}")
 
         # Объединяем данные
         meta: dict[int, dict] = {}
@@ -204,9 +209,11 @@ class XrayBackend(VPNBackend):
             # Добавляем IP из логов, если он есть
             if uid in log_meta and "remote_ip" in log_meta[uid]:
                 user_meta["remote_ip"] = log_meta[uid]["remote_ip"]
+                logger.debug(f"Added remote_ip for user {uid}: {user_meta['remote_ip']}")
             
             meta[uid] = user_meta
-
+        
+        logger.info(f"Returning metadata for {len(meta)} users, {sum(1 for m in meta.values() if 'remote_ip' in m)} with IPs")
         return meta
 
     async def get_logs(self, include_buffer: bool = True):

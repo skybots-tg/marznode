@@ -209,6 +209,18 @@ class MarzService(MarzServiceBase):
                 )
             )
         
+        # Логируем что отправляем
+        logger.info(f"=== FetchUsersStats: Sending gRPC response ===")
+        logger.info(f"Total users in response: {len(user_stats)}")
+        for us in user_stats[:5]:  # Показываем первые 5
+            logger.info(
+                f"  User {us.uid}: usage={us.usage}, "
+                f"remote_ip='{us.remote_ip}', uplink={us.uplink}, downlink={us.downlink}, "
+                f"client_name='{us.client_name}'"
+            )
+        if len(user_stats) > 5:
+            logger.info(f"  ... and {len(user_stats) - 5} more users")
+        
         await stream.send_message(UsersStats(users_stats=user_stats))
 
     async def StreamBackendLogs(
