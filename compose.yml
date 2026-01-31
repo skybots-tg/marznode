@@ -12,8 +12,9 @@ services:
       SING_BOX_EXECUTABLE_PATH: "/usr/local/bin/sing-box"
       HYSTERIA_EXECUTABLE_PATH: "/usr/local/bin/hysteria"
       SSL_CLIENT_CERT_FILE: "/var/lib/marznode/client.pem"
-      SSL_KEY_FILE: "./server.key"
-      SSL_CERT_FILE: "./server.cert"
+      # Сертификаты теперь сохраняются в volume, чтобы пережить перезагрузку
+      SSL_KEY_FILE: "/var/lib/marznode/server.key"
+      SSL_CERT_FILE: "/var/lib/marznode/server.cert"
 
     volumes:
       - /var/lib/marznode:/var/lib/marznode
