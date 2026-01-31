@@ -18,6 +18,7 @@ from marznode.backends.xray.api.types.account import accounts_map
 from marznode.config import XRAY_RESTART_ON_FAILURE, XRAY_RESTART_ON_FAILURE_INTERVAL
 from marznode.models import User, Inbound
 from marznode.storage import BaseStorage
+from marznode.storage.devices import DeviceStorage
 from marznode.utils.network import find_free_port
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,14 @@ class XrayBackend(VPNBackend):
         self._storage = storage
         self._config_path = config_path
         self._restart_lock = asyncio.Lock()
+        
+        # Device tracking and enforcement
+        self._device_storage = DeviceStorage(inactivity_timeout=300)
+        self._device_check_interval = 60  # Check devices every 60 seconds
+        self._device_enforcement_enabled = False
+        
         asyncio.create_task(self._restart_on_failure())
+        asyncio.create_task(self._periodic_device_check())
 
     @property
     def running(self) -> bool:
@@ -130,6 +138,13 @@ class XrayBackend(VPNBackend):
 
         try:
             await self._api.add_inbound_user(inbound.tag, user_account)
+            
+            # Log device limit configuration if enabled
+            if user.enforce_device_limit and user.device_limit is not None:
+                logger.info(
+                    f"User {user.username} (id={user.id}) added with device limit: "
+                    f"{user.device_limit}, allowed devices: {len(user.allowed_fingerprints)}"
+                )
         except (EmailExistsError, TagNotFoundError):
             raise
         except OSError:
@@ -215,6 +230,76 @@ class XrayBackend(VPNBackend):
         
         logger.info(f"Returning metadata for {len(meta)} users, {sum(1 for m in meta.values() if 'remote_ip' in m)} with IPs")
         return meta
+    
+    async def _periodic_device_check(self):
+        """Periodically check device connections and enforce limits"""
+        while True:
+            try:
+                await asyncio.sleep(self._device_check_interval)
+                
+                if not self.running or not self._device_enforcement_enabled:
+                    continue
+                
+                # Get current usage stats and metadata
+                try:
+                    usages = await self.get_usages(reset=False)
+                    meta = await self.get_users_meta()
+                except Exception as e:
+                    logger.error(f"Error getting stats for device check: {e}")
+                    continue
+                
+                # Check each user's devices
+                users = await self._storage.list_users()
+                if not users:
+                    continue
+                
+                for user in users:
+                    if not user.enforce_device_limit or user.device_limit is None:
+                        continue
+                    
+                    uid = user.id
+                    if uid not in usages or uid not in meta:
+                        continue
+                    
+                    # Update device storage and check if allowed
+                    remote_ip = meta[uid].get("remote_ip", "unknown")
+                    client_name = meta[uid].get("client_name", "xray")
+                    
+                    is_allowed, reason = self._device_storage.update_device(
+                        uid=uid,
+                        remote_ip=remote_ip,
+                        client_name=client_name,
+                        current_usage=usages[uid],
+                        meta=meta[uid],
+                        allowed_fingerprints=user.allowed_fingerprints,
+                        device_limit=user.device_limit,
+                        enforce_limit=user.enforce_device_limit,
+                    )
+                    
+                    if not is_allowed:
+                        logger.warning(
+                            f"Device limit violation for user {user.username} (id={uid}): {reason}"
+                        )
+                        # TODO: Implement blocking mechanism
+                        # Options:
+                        # 1. Remove user from xray temporarily
+                        # 2. Add to blacklist route
+                        # 3. Report to Marzneshin for action
+                
+                # Mark inactive devices
+                self._device_storage.mark_inactive_devices()
+                
+            except Exception as e:
+                logger.error(f"Error in periodic device check: {e}", exc_info=True)
+    
+    def get_device_storage(self) -> DeviceStorage:
+        """Get device storage instance for external access"""
+        return self._device_storage
+    
+    def set_device_enforcement(self, enabled: bool):
+        """Enable or disable device limit enforcement"""
+        self._device_enforcement_enabled = enabled
+        logger.info(f"Device limit enforcement {'enabled' if enabled else 'disabled'}")
 
     async def get_logs(self, include_buffer: bool = True):
         if include_buffer:

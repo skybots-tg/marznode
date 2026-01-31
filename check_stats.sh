@@ -130,3 +130,8 @@ PYTHON_SCRIPT
 echo ""
 echo "Проверка завершена!"
 
+
+
+
+
+

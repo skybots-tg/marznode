@@ -68,7 +68,14 @@ class MarzService(MarzServiceBase):
 
     async def _update_user(self, user_data: UserData):
         user = user_data.user
-        user = User(id=user.id, username=user.username, key=user.key)
+        user = User(
+            id=user.id,
+            username=user.username,
+            key=user.key,
+            device_limit=user.device_limit if user.HasField("device_limit") else None,
+            allowed_fingerprints=list(user.allowed_fingerprints) if user.allowed_fingerprints else [],
+            enforce_device_limit=user.enforce_device_limit,
+        )
         storage_user = await self._storage.list_users(user.id)
         if not storage_user and len(user_data.inbounds) > 0:
             """add the user in case there isn't any currently
@@ -204,22 +211,52 @@ class MarzService(MarzServiceBase):
                     if info.get(key) and not user_meta.get(key):
                         user_meta[key] = info[key]
 
-        # Сохраняем данные в историю устройств
-        logger.info("=== Saving device history ===")
+        # Сохраняем данные в историю устройств с проверкой лимитов
+        logger.info("=== Saving device history and checking limits ===")
         for uid, usage in total_usage.items():
             info = meta.get(uid, {})
             remote_ip = info.get("remote_ip", "")
             client_name = info.get("client_name", "unknown")
             
             if remote_ip:  # Сохраняем только если есть IP
-                self._device_storage.update_device(
+                # Get user info for device limit enforcement
+                storage_user = await self._storage.list_users(uid)
+                
+                # Prepare enforcement parameters
+                allowed_fingerprints = None
+                device_limit = None
+                enforce_limit = False
+                
+                if storage_user:
+                    allowed_fingerprints = storage_user.allowed_fingerprints
+                    device_limit = storage_user.device_limit
+                    enforce_limit = storage_user.enforce_device_limit
+                    
+                    if enforce_limit and device_limit is not None:
+                        logger.info(
+                            f"User {uid} has device limit enforcement enabled: "
+                            f"limit={device_limit}, allowed={len(allowed_fingerprints)}"
+                        )
+                
+                # Update device and check if allowed
+                is_allowed, reason = self._device_storage.update_device(
                     uid=uid,
                     remote_ip=remote_ip,
                     client_name=client_name,
                     current_usage=usage,
-                    meta=info
+                    meta=info,
+                    allowed_fingerprints=allowed_fingerprints,
+                    device_limit=device_limit,
+                    enforce_limit=enforce_limit,
                 )
-                logger.debug(f"Saved device for user {uid}: {remote_ip}:{client_name}")
+                
+                if not is_allowed:
+                    logger.warning(
+                        f"Device blocked for user {uid}: {reason}, "
+                        f"ip={remote_ip}, client={client_name}"
+                    )
+                else:
+                    logger.debug(f"Saved device for user {uid}: {remote_ip}:{client_name}")
         
         # Отмечаем неактивные устройства
         self._device_storage.mark_inactive_devices()

@@ -30,6 +30,12 @@ message User {
   uint32 id = 1;
   string username = 2;
   string key = 3;
+  
+  // ========== Device limit enforcement fields ==========
+  optional uint32 device_limit = 4;           // Device limit (null = no limit)
+  repeated string allowed_fingerprints = 5;   // List of allowed device fingerprints
+  bool enforce_device_limit = 6;              // Enable device limit enforcement at proxy level
+  // ====================================================
 }
 
 message UserData {

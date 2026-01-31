@@ -47,14 +47,20 @@ class Inbound(_message.Message):
     def __init__(self, tag: _Optional[str] = ..., config: _Optional[str] = ...) -> None: ...
 
 class User(_message.Message):
-    __slots__ = ("id", "username", "key")
+    __slots__ = ("id", "username", "key", "device_limit", "allowed_fingerprints", "enforce_device_limit")
     ID_FIELD_NUMBER: _ClassVar[int]
     USERNAME_FIELD_NUMBER: _ClassVar[int]
     KEY_FIELD_NUMBER: _ClassVar[int]
+    DEVICE_LIMIT_FIELD_NUMBER: _ClassVar[int]
+    ALLOWED_FINGERPRINTS_FIELD_NUMBER: _ClassVar[int]
+    ENFORCE_DEVICE_LIMIT_FIELD_NUMBER: _ClassVar[int]
     id: int
     username: str
     key: str
-    def __init__(self, id: _Optional[int] = ..., username: _Optional[str] = ..., key: _Optional[str] = ...) -> None: ...
+    device_limit: int
+    allowed_fingerprints: _containers.RepeatedScalarFieldContainer[str]
+    enforce_device_limit: bool
+    def __init__(self, id: _Optional[int] = ..., username: _Optional[str] = ..., key: _Optional[str] = ..., device_limit: _Optional[int] = ..., allowed_fingerprints: _Optional[_Iterable[str]] = ..., enforce_device_limit: bool = ...) -> None: ...
 
 class UserData(_message.Message):
     __slots__ = ("user", "inbounds")

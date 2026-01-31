@@ -55,3 +55,8 @@ echo "Для проверки следующей даты ротации:"
 echo "  cat /var/lib/logrotate/status | grep xray"
 echo ""
 
+
+
+
+
+

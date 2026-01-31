@@ -6,6 +6,12 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from marznode.utils.device_fingerprint import (
+    build_device_fingerprint,
+    is_device_allowed,
+    extract_device_info_from_meta,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +29,7 @@ class DeviceInfo:
     uplink: int = 0
     downlink: int = 0
     is_active: bool = True
+    fingerprint: str = ""  # Device fingerprint for identification
     
     def __post_init__(self):
         if self.first_seen == 0:
@@ -32,7 +39,9 @@ class DeviceInfo:
     
     def get_device_key(self) -> str:
         """Generate unique key for this device"""
-        # Используем IP + client_name как уникальный идентификатор устройства
+        # Use fingerprint if available, otherwise fall back to IP:client_name
+        if self.fingerprint:
+            return self.fingerprint
         return f"{self.remote_ip}:{self.client_name}"
     
     def update(self, new_data: dict, usage_delta: int = 0):
@@ -62,6 +71,39 @@ class DeviceStorage:
         self._devices: Dict[int, Dict[str, DeviceInfo]] = defaultdict(dict)
         self._last_usage: Dict[int, int] = {}  # для отслеживания дельты трафика
         self._inactivity_timeout = inactivity_timeout
+        self._blocked_connections: Dict[int, List[str]] = defaultdict(list)  # uid -> list of blocked fingerprints
+    
+    def check_device_allowed(
+        self,
+        uid: int,
+        fingerprint: str,
+        allowed_fingerprints: list[str],
+        device_limit: Optional[int] = None,
+        enforce: bool = True,
+    ) -> tuple[bool, str]:
+        """
+        Check if a device is allowed to connect.
+        
+        Returns:
+            Tuple of (is_allowed, reason)
+        """
+        allowed, reason = is_device_allowed(
+            fingerprint=fingerprint,
+            allowed_fingerprints=allowed_fingerprints,
+            device_limit=device_limit,
+            enforce=enforce,
+        )
+        
+        if not allowed:
+            # Track blocked connection attempts
+            if fingerprint not in self._blocked_connections[uid]:
+                self._blocked_connections[uid].append(fingerprint)
+                logger.warning(
+                    f"Blocked connection for user {uid}: {reason}, "
+                    f"fingerprint={fingerprint[:16]}..."
+                )
+        
+        return allowed, reason
     
     def update_device(
         self, 
@@ -69,10 +111,40 @@ class DeviceStorage:
         remote_ip: str, 
         client_name: str,
         current_usage: int,
-        meta: dict
-    ):
-        """Update or create device info"""
-        device_key = f"{remote_ip}:{client_name}"
+        meta: dict,
+        allowed_fingerprints: Optional[list[str]] = None,
+        device_limit: Optional[int] = None,
+        enforce_limit: bool = False,
+    ) -> tuple[bool, str]:
+        """
+        Update or create device info.
+        
+        Returns:
+            Tuple of (is_allowed, reason) - whether the device is allowed to connect
+        """
+        # Calculate device fingerprint
+        fingerprint, _ = build_device_fingerprint(
+            user_id=uid,
+            client_name=client_name,
+            tls_fingerprint=meta.get("tls_fingerprint", ""),
+            os_guess=meta.get("os_guess", ""),
+            user_agent=meta.get("user_agent", ""),
+        )
+        
+        # Check if device is allowed (if enforcement is enabled)
+        if enforce_limit and allowed_fingerprints is not None:
+            is_allowed, reason = self.check_device_allowed(
+                uid=uid,
+                fingerprint=fingerprint,
+                allowed_fingerprints=allowed_fingerprints,
+                device_limit=device_limit,
+                enforce=enforce_limit,
+            )
+            
+            if not is_allowed:
+                return False, reason
+        
+        device_key = fingerprint  # Use fingerprint as device key
         
         # Вычисляем дельту трафика
         last_usage = self._last_usage.get(uid, 0)
@@ -84,7 +156,7 @@ class DeviceStorage:
             device = self._devices[uid][device_key]
             device.update(meta, usage_delta)
             logger.debug(
-                f"Updated device for user {uid}: {device_key}, "
+                f"Updated device for user {uid}: fingerprint={fingerprint[:16]}..., "
                 f"usage_delta={usage_delta}, total={device.total_usage}"
             )
         else:
@@ -98,9 +170,15 @@ class DeviceStorage:
                 total_usage=usage_delta,
                 uplink=meta.get("uplink", 0),
                 downlink=meta.get("downlink", 0),
+                fingerprint=fingerprint,
             )
             self._devices[uid][device_key] = device
-            logger.info(f"New device for user {uid}: {device_key}")
+            logger.info(
+                f"New device for user {uid}: fingerprint={fingerprint[:16]}..., "
+                f"client={client_name}, ip={remote_ip}"
+            )
+        
+        return True, "device allowed"
     
     def mark_inactive_devices(self):
         """Mark devices as inactive if they haven't been seen recently"""
@@ -130,6 +208,20 @@ class DeviceStorage:
             uid: self.get_user_devices(uid)
             for uid in self._devices.keys()
         }
+    
+    def get_blocked_connections(self, uid: Optional[int] = None) -> Dict[int, List[str]]:
+        """Get blocked connection attempts"""
+        if uid is not None:
+            return {uid: self._blocked_connections.get(uid, [])}
+        return dict(self._blocked_connections)
+    
+    def clear_blocked_connections(self, uid: Optional[int] = None):
+        """Clear blocked connection history"""
+        if uid is not None:
+            if uid in self._blocked_connections:
+                del self._blocked_connections[uid]
+        else:
+            self._blocked_connections.clear()
     
     def cleanup_old_devices(self, max_age_seconds: int = 86400 * 7):  # 7 дней
         """Remove devices that haven't been seen for a long time"""

@@ -24,15 +24,15 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1emarznode/service/service.proto\x12\x08marznode\"\x07\n\x05\x45mpty\"z\n\x07\x42\x61\x63kend\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x11\n\x04type\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x14\n\x07version\x18\x03 \x01(\tH\x01\x88\x01\x01\x12#\n\x08inbounds\x18\x04 \x03(\x0b\x32\x11.marznode.InboundB\x07\n\x05_typeB\n\n\x08_version\"7\n\x10\x42\x61\x63kendsResponse\x12#\n\x08\x62\x61\x63kends\x18\x01 \x03(\x0b\x32\x11.marznode.Backend\"6\n\x07Inbound\x12\x0b\n\x03tag\x18\x01 \x01(\t\x12\x13\n\x06\x63onfig\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\t\n\x07_config\"1\n\x04User\x12\n\n\x02id\x18\x01 \x01(\r\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x0b\n\x03key\x18\x03 \x01(\t\"M\n\x08UserData\x12\x1c\n\x04user\x18\x01 \x01(\x0b\x32\x0e.marznode.User\x12#\n\x08inbounds\x18\x02 \x03(\x0b\x32\x11.marznode.Inbound\"3\n\tUsersData\x12&\n\nusers_data\x18\x01 \x03(\x0b\x32\x12.marznode.UserData\"\xfd\x02\n\nUsersStats\x12\x33\n\x0busers_stats\x18\x01 \x03(\x0b\x32\x1e.marznode.UsersStats.UserStats\x1a\xb9\x02\n\tUserStats\x12\x0b\n\x03uid\x18\x01 \x01(\r\x12\r\n\x05usage\x18\x02 \x01(\x04\x12\x16\n\tremote_ip\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0b\x63lient_name\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x17\n\nuser_agent\x18\x05 \x01(\tH\x02\x88\x01\x01\x12\x13\n\x06uplink\x18\x06 \x01(\x04H\x03\x88\x01\x01\x12\x15\n\x08\x64ownlink\x18\x07 \x01(\x04H\x04\x88\x01\x01\x12\x15\n\x08protocol\x18\x08 \x01(\tH\x05\x88\x01\x01\x12\x1c\n\x0ftls_fingerprint\x18\t \x01(\tH\x06\x88\x01\x01\x42\x0c\n\n_remote_ipB\x0e\n\x0c_client_nameB\r\n\x0b_user_agentB\t\n\x07_uplinkB\x0b\n\t_downlinkB\x0b\n\t_protocolB\x12\n\x10_tls_fingerprint\"\x17\n\x07LogLine\x12\x0c\n\x04line\x18\x01 \x01(\t\"U\n\rBackendConfig\x12\x15\n\rconfiguration\x18\x01 \x01(\t\x12-\n\rconfig_format\x18\x02 \x01(\x0e\x32\x16.marznode.ConfigFormat\"B\n\x12\x42\x61\x63kendLogsRequest\x12\x14\n\x0c\x62\x61\x63kend_name\x18\x01 \x01(\t\x12\x16\n\x0einclude_buffer\x18\x02 \x01(\x08\"f\n\x15RestartBackendRequest\x12\x14\n\x0c\x62\x61\x63kend_name\x18\x01 \x01(\t\x12,\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.marznode.BackendConfigH\x00\x88\x01\x01\x42\t\n\x07_config\"\x1f\n\x0c\x42\x61\x63kendStats\x12\x0f\n\x07running\x18\x01 \x01(\x08\"\xa3\x02\n\nDeviceInfo\x12\x11\n\tremote_ip\x18\x01 \x01(\t\x12\x13\n\x0b\x63lient_name\x18\x02 \x01(\t\x12\x17\n\nuser_agent\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x15\n\x08protocol\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x1c\n\x0ftls_fingerprint\x18\x05 \x01(\tH\x02\x88\x01\x01\x12\x12\n\nfirst_seen\x18\x06 \x01(\x03\x12\x11\n\tlast_seen\x18\x07 \x01(\x03\x12\x13\n\x0btotal_usage\x18\x08 \x01(\x04\x12\x0e\n\x06uplink\x18\t \x01(\x04\x12\x10\n\x08\x64ownlink\x18\n \x01(\x04\x12\x11\n\tis_active\x18\x0b \x01(\x08\x42\r\n\x0b_user_agentB\x0b\n\t_protocolB\x12\n\x10_tls_fingerprint\"H\n\x12UserDevicesHistory\x12\x0b\n\x03uid\x18\x01 \x01(\r\x12%\n\x07\x64\x65vices\x18\x02 \x03(\x0b\x32\x14.marznode.DeviceInfo\"K\n\x12UserDevicesRequest\x12\x0b\n\x03uid\x18\x01 \x01(\r\x12\x18\n\x0b\x61\x63tive_only\x18\x02 \x01(\x08H\x00\x88\x01\x01\x42\x0e\n\x0c_active_only\">\n\x0f\x41llUsersDevices\x12+\n\x05users\x18\x01 \x03(\x0b\x32\x1c.marznode.UserDevicesHistory*-\n\x0c\x43onfigFormat\x12\t\n\x05PLAIN\x10\x00\x12\x08\n\x04JSON\x10\x01\x12\x08\n\x04YAML\x10\x02\x32\x8d\x05\n\x0bMarzService\x12\x32\n\tSyncUsers\x12\x12.marznode.UserData\x1a\x0f.marznode.Empty(\x01\x12\x37\n\x0fRepopulateUsers\x12\x13.marznode.UsersData\x1a\x0f.marznode.Empty\x12<\n\rFetchBackends\x12\x0f.marznode.Empty\x1a\x1a.marznode.BackendsResponse\x12\x38\n\x0f\x46\x65tchUsersStats\x12\x0f.marznode.Empty\x1a\x14.marznode.UsersStats\x12@\n\x12\x46\x65tchBackendConfig\x12\x11.marznode.Backend\x1a\x17.marznode.BackendConfig\x12\x42\n\x0eRestartBackend\x12\x1f.marznode.RestartBackendRequest\x1a\x0f.marznode.Empty\x12\x46\n\x11StreamBackendLogs\x12\x1c.marznode.BackendLogsRequest\x1a\x11.marznode.LogLine0\x01\x12<\n\x0fGetBackendStats\x12\x11.marznode.Backend\x1a\x16.marznode.BackendStats\x12N\n\x10\x46\x65tchUserDevices\x12\x1c.marznode.UserDevicesRequest\x1a\x1c.marznode.UserDevicesHistory\x12=\n\x0f\x46\x65tchAllDevices\x12\x0f.marznode.Empty\x1a\x19.marznode.AllUsersDevicesb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1emarznode/service/service.proto\x12\x08marznode\"\x07\n\x05\x45mpty\"z\n\x07\x42\x61\x63kend\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x11\n\x04type\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x14\n\x07version\x18\x03 \x01(\tH\x01\x88\x01\x01\x12#\n\x08inbounds\x18\x04 \x03(\x0b\x32\x11.marznode.InboundB\x07\n\x05_typeB\n\n\x08_version\"7\n\x10\x42\x61\x63kendsResponse\x12#\n\x08\x62\x61\x63kends\x18\x01 \x03(\x0b\x32\x11.marznode.Backend\"6\n\x07Inbound\x12\x0b\n\x03tag\x18\x01 \x01(\t\x12\x13\n\x06\x63onfig\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\t\n\x07_config\"\x99\x01\n\x04User\x12\n\n\x02id\x18\x01 \x01(\r\x12\x10\n\x08username\x18\x02 \x01(\t\x12\x0b\n\x03key\x18\x03 \x01(\t\x12\x19\n\x0c\x64\x65vice_limit\x18\x04 \x01(\rH\x00\x88\x01\x01\x12\x1c\n\x14\x61llowed_fingerprints\x18\x05 \x03(\t\x12\x1c\n\x14\x65nforce_device_limit\x18\x06 \x01(\x08\x42\x0f\n\r_device_limit\"M\n\x08UserData\x12\x1c\n\x04user\x18\x01 \x01(\x0b\x32\x0e.marznode.User\x12#\n\x08inbounds\x18\x02 \x03(\x0b\x32\x11.marznode.Inbound\"3\n\tUsersData\x12&\n\nusers_data\x18\x01 \x03(\x0b\x32\x12.marznode.UserData\"\xfd\x02\n\nUsersStats\x12\x33\n\x0busers_stats\x18\x01 \x03(\x0b\x32\x1e.marznode.UsersStats.UserStats\x1a\xb9\x02\n\tUserStats\x12\x0b\n\x03uid\x18\x01 \x01(\r\x12\r\n\x05usage\x18\x02 \x01(\x04\x12\x16\n\tremote_ip\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0b\x63lient_name\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x17\n\nuser_agent\x18\x05 \x01(\tH\x02\x88\x01\x01\x12\x13\n\x06uplink\x18\x06 \x01(\x04H\x03\x88\x01\x01\x12\x15\n\x08\x64ownlink\x18\x07 \x01(\x04H\x04\x88\x01\x01\x12\x15\n\x08protocol\x18\x08 \x01(\tH\x05\x88\x01\x01\x12\x1c\n\x0ftls_fingerprint\x18\t \x01(\tH\x06\x88\x01\x01\x42\x0c\n\n_remote_ipB\x0e\n\x0c_client_nameB\r\n\x0b_user_agentB\t\n\x07_uplinkB\x0b\n\t_downlinkB\x0b\n\t_protocolB\x12\n\x10_tls_fingerprint\"\x17\n\x07LogLine\x12\x0c\n\x04line\x18\x01 \x01(\t\"U\n\rBackendConfig\x12\x15\n\rconfiguration\x18\x01 \x01(\t\x12-\n\rconfig_format\x18\x02 \x01(\x0e\x32\x16.marznode.ConfigFormat\"B\n\x12\x42\x61\x63kendLogsRequest\x12\x14\n\x0c\x62\x61\x63kend_name\x18\x01 \x01(\t\x12\x16\n\x0einclude_buffer\x18\x02 \x01(\x08\"f\n\x15RestartBackendRequest\x12\x14\n\x0c\x62\x61\x63kend_name\x18\x01 \x01(\t\x12,\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.marznode.BackendConfigH\x00\x88\x01\x01\x42\t\n\x07_config\"\x1f\n\x0c\x42\x61\x63kendStats\x12\x0f\n\x07running\x18\x01 \x01(\x08\"\xa3\x02\n\nDeviceInfo\x12\x11\n\tremote_ip\x18\x01 \x01(\t\x12\x13\n\x0b\x63lient_name\x18\x02 \x01(\t\x12\x17\n\nuser_agent\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x15\n\x08protocol\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x1c\n\x0ftls_fingerprint\x18\x05 \x01(\tH\x02\x88\x01\x01\x12\x12\n\nfirst_seen\x18\x06 \x01(\x03\x12\x11\n\tlast_seen\x18\x07 \x01(\x03\x12\x13\n\x0btotal_usage\x18\x08 \x01(\x04\x12\x0e\n\x06uplink\x18\t \x01(\x04\x12\x10\n\x08\x64ownlink\x18\n \x01(\x04\x12\x11\n\tis_active\x18\x0b \x01(\x08\x42\r\n\x0b_user_agentB\x0b\n\t_protocolB\x12\n\x10_tls_fingerprint\"H\n\x12UserDevicesHistory\x12\x0b\n\x03uid\x18\x01 \x01(\r\x12%\n\x07\x64\x65vices\x18\x02 \x03(\x0b\x32\x14.marznode.DeviceInfo\"K\n\x12UserDevicesRequest\x12\x0b\n\x03uid\x18\x01 \x01(\r\x12\x18\n\x0b\x61\x63tive_only\x18\x02 \x01(\x08H\x00\x88\x01\x01\x42\x0e\n\x0c_active_only\">\n\x0f\x41llUsersDevices\x12+\n\x05users\x18\x01 \x03(\x0b\x32\x1c.marznode.UserDevicesHistory*-\n\x0c\x43onfigFormat\x12\t\n\x05PLAIN\x10\x00\x12\x08\n\x04JSON\x10\x01\x12\x08\n\x04YAML\x10\x02\x32\x8d\x05\n\x0bMarzService\x12\x32\n\tSyncUsers\x12\x12.marznode.UserData\x1a\x0f.marznode.Empty(\x01\x12\x37\n\x0fRepopulateUsers\x12\x13.marznode.UsersData\x1a\x0f.marznode.Empty\x12<\n\rFetchBackends\x12\x0f.marznode.Empty\x1a\x1a.marznode.BackendsResponse\x12\x38\n\x0f\x46\x65tchUsersStats\x12\x0f.marznode.Empty\x1a\x14.marznode.UsersStats\x12@\n\x12\x46\x65tchBackendConfig\x12\x11.marznode.Backend\x1a\x17.marznode.BackendConfig\x12\x42\n\x0eRestartBackend\x12\x1f.marznode.RestartBackendRequest\x1a\x0f.marznode.Empty\x12\x46\n\x11StreamBackendLogs\x12\x1c.marznode.BackendLogsRequest\x1a\x11.marznode.LogLine0\x01\x12<\n\x0fGetBackendStats\x12\x11.marznode.Backend\x1a\x16.marznode.BackendStats\x12N\n\x10\x46\x65tchUserDevices\x12\x1c.marznode.UserDevicesRequest\x1a\x1c.marznode.UserDevicesHistory\x12=\n\x0f\x46\x65tchAllDevices\x12\x0f.marznode.Empty\x1a\x19.marznode.AllUsersDevicesb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'marznode.service.service_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_CONFIGFORMAT']._serialized_start=1683
-  _globals['_CONFIGFORMAT']._serialized_end=1728
+  _globals['_CONFIGFORMAT']._serialized_start=1788
+  _globals['_CONFIGFORMAT']._serialized_end=1833
   _globals['_EMPTY']._serialized_start=44
   _globals['_EMPTY']._serialized_end=51
   _globals['_BACKEND']._serialized_start=53
@@ -41,34 +41,34 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_BACKENDSRESPONSE']._serialized_end=232
   _globals['_INBOUND']._serialized_start=234
   _globals['_INBOUND']._serialized_end=288
-  _globals['_USER']._serialized_start=290
-  _globals['_USER']._serialized_end=339
-  _globals['_USERDATA']._serialized_start=341
-  _globals['_USERDATA']._serialized_end=418
-  _globals['_USERSDATA']._serialized_start=420
-  _globals['_USERSDATA']._serialized_end=471
-  _globals['_USERSSTATS']._serialized_start=474
-  _globals['_USERSSTATS']._serialized_end=855
-  _globals['_USERSSTATS_USERSTATS']._serialized_start=542
-  _globals['_USERSSTATS_USERSTATS']._serialized_end=855
-  _globals['_LOGLINE']._serialized_start=857
-  _globals['_LOGLINE']._serialized_end=880
-  _globals['_BACKENDCONFIG']._serialized_start=882
-  _globals['_BACKENDCONFIG']._serialized_end=967
-  _globals['_BACKENDLOGSREQUEST']._serialized_start=969
-  _globals['_BACKENDLOGSREQUEST']._serialized_end=1035
-  _globals['_RESTARTBACKENDREQUEST']._serialized_start=1037
-  _globals['_RESTARTBACKENDREQUEST']._serialized_end=1139
-  _globals['_BACKENDSTATS']._serialized_start=1141
-  _globals['_BACKENDSTATS']._serialized_end=1172
-  _globals['_DEVICEINFO']._serialized_start=1175
-  _globals['_DEVICEINFO']._serialized_end=1466
-  _globals['_USERDEVICESHISTORY']._serialized_start=1468
-  _globals['_USERDEVICESHISTORY']._serialized_end=1540
-  _globals['_USERDEVICESREQUEST']._serialized_start=1542
-  _globals['_USERDEVICESREQUEST']._serialized_end=1617
-  _globals['_ALLUSERSDEVICES']._serialized_start=1619
-  _globals['_ALLUSERSDEVICES']._serialized_end=1681
-  _globals['_MARZSERVICE']._serialized_start=1731
-  _globals['_MARZSERVICE']._serialized_end=2384
+  _globals['_USER']._serialized_start=291
+  _globals['_USER']._serialized_end=444
+  _globals['_USERDATA']._serialized_start=446
+  _globals['_USERDATA']._serialized_end=523
+  _globals['_USERSDATA']._serialized_start=525
+  _globals['_USERSDATA']._serialized_end=576
+  _globals['_USERSSTATS']._serialized_start=579
+  _globals['_USERSSTATS']._serialized_end=960
+  _globals['_USERSSTATS_USERSTATS']._serialized_start=647
+  _globals['_USERSSTATS_USERSTATS']._serialized_end=960
+  _globals['_LOGLINE']._serialized_start=962
+  _globals['_LOGLINE']._serialized_end=985
+  _globals['_BACKENDCONFIG']._serialized_start=987
+  _globals['_BACKENDCONFIG']._serialized_end=1072
+  _globals['_BACKENDLOGSREQUEST']._serialized_start=1074
+  _globals['_BACKENDLOGSREQUEST']._serialized_end=1140
+  _globals['_RESTARTBACKENDREQUEST']._serialized_start=1142
+  _globals['_RESTARTBACKENDREQUEST']._serialized_end=1244
+  _globals['_BACKENDSTATS']._serialized_start=1246
+  _globals['_BACKENDSTATS']._serialized_end=1277
+  _globals['_DEVICEINFO']._serialized_start=1280
+  _globals['_DEVICEINFO']._serialized_end=1571
+  _globals['_USERDEVICESHISTORY']._serialized_start=1573
+  _globals['_USERDEVICESHISTORY']._serialized_end=1645
+  _globals['_USERDEVICESREQUEST']._serialized_start=1647
+  _globals['_USERDEVICESREQUEST']._serialized_end=1722
+  _globals['_ALLUSERSDEVICES']._serialized_start=1724
+  _globals['_ALLUSERSDEVICES']._serialized_end=1786
+  _globals['_MARZSERVICE']._serialized_start=1836
+  _globals['_MARZSERVICE']._serialized_end=2489
 # @@protoc_insertion_point(module_scope)

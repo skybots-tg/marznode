@@ -124,3 +124,8 @@ echo "💡 Эти данные отправляются в Marzneshin через
 echo "   в формате: {uid, usage, uplink, downlink, remote_ip}"
 echo ""
 
+
+
+
+
+
