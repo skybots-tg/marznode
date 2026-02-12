@@ -124,11 +124,21 @@ class XrayBackend(VPNBackend):
             if not backend_config:
                 logger.info("Restarting Xray with existing config")
                 return await self._runner.restart(self._config)
+            
+            # При перезапуске с новым конфигом нужно установить флаг restarting,
+            # чтобы stop() знал, что это запланированный перезапуск
             logger.info("Restarting Xray with new config (stop + start)")
-            await self.stop()
-            logger.info("Xray stopped, starting with new config")
-            await self.start(backend_config)
-            logger.info("Xray restarted successfully")
+            self._runner.restarting = True
+            logger.info("Set restarting flag to True before stop()")
+            try:
+                await self.stop()
+                logger.info("Xray stopped, starting with new config")
+                await self.start(backend_config)
+                logger.info("Xray restarted successfully")
+            finally:
+                # Сбрасываем флаг после завершения перезапуска
+                self._runner.restarting = False
+                logger.info("Set restarting flag to False after restart")
         except Exception as e:
             logger.error(
                 f"Error during Xray restart: {e}",
