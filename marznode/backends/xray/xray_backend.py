@@ -121,6 +121,12 @@ class XrayBackend(VPNBackend):
                 return await self._runner.restart(self._config)
             await self.stop()
             await self.start(backend_config)
+        except Exception as e:
+            logger.error(
+                f"Error during Xray restart: {e}",
+                exc_info=True
+            )
+            raise
         finally:
             self._restart_lock.release()
 

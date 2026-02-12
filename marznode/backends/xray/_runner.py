@@ -257,13 +257,66 @@ class XrayCore:
         )
 
         # Завершаем процесс, если он еще существует
+        returncode = None
+        last_error_lines = []
         try:
             if process and process.returncode is None:
-                await process.communicate()
+                # Ждем завершения процесса и получаем оставшиеся данные
+                stdout_data, stderr_data = await process.communicate()
+                
+                # Сохраняем последние строки из stderr для диагностики
+                if stderr_data:
+                    stderr_lines = stderr_data.decode(errors="ignore").strip().split('\n')
+                    # Берем последние 10 строк, которые могут содержать ошибку
+                    last_error_lines = [line.strip() for line in stderr_lines[-10:] if line.strip()]
+                
+                returncode = process.returncode
         except Exception as e:
-            logger.debug(f"Error communicating with process: {e}")
+            logger.error(f"Error communicating with process: {e}", exc_info=True)
+            returncode = process.returncode if process else None
         
-        logger.warning("Xray stopped/died")
+        # Логируем причину остановки с деталями
+        if self.restarting:
+            logger.info("Xray stopped (planned restart)")
+        else:
+            logger.warning(
+                f"Xray stopped/died unexpectedly (returncode={returncode})"
+            )
+            
+            # Логируем последние строки из буфера логов, которые могут содержать ошибку
+            if self._logs_buffer:
+                recent_logs = list(self._logs_buffer)[-20:]  # Последние 20 строк
+                error_logs = []
+                for log_line in recent_logs:
+                    if log_line and log_line != b"":
+                        try:
+                            line_str = log_line.decode(errors="ignore").strip()
+                            # Ищем строки с ошибками, предупреждениями или критическими сообщениями
+                            if any(keyword in line_str.lower() for keyword in 
+                                   ['error', 'failed', 'fatal', 'panic', 'crash', 'exception', 
+                                    'rejected', 'invalid', 'denied', 'refused']):
+                                error_logs.append(line_str)
+                        except Exception:
+                            pass
+                
+                if error_logs:
+                    logger.error("Recent error/warning messages from Xray logs:")
+                    for err_line in error_logs[-10:]:  # Последние 10 ошибок
+                        logger.error(f"  Xray: {err_line}")
+            
+            # Логируем последние строки из stderr
+            if last_error_lines:
+                logger.error("Last error messages from Xray stderr:")
+                for err_line in last_error_lines:
+                    logger.error(f"  Xray stderr: {err_line}")
+            
+            # Если returncode не 0, это явная ошибка
+            if returncode and returncode != 0:
+                logger.error(
+                    f"Xray process exited with non-zero return code: {returncode}. "
+                    f"This usually indicates a configuration error or crash."
+                )
+        
         self.stop_event.set()
 
     def get_logs_stm(self) -> MemoryObjectReceiveStream:
