@@ -214,11 +214,21 @@ class MarzService(MarzServiceBase):
         # Сохраняем данные в историю устройств с проверкой лимитов
         logger.info("=== Saving device history and checking limits ===")
         logger.debug(f"Total usage dict has {len(total_usage)} users: {list(total_usage.keys())}")
+        logger.debug(f"Meta dict has {len(meta)} users: {list(meta.keys())}")
+        
+        # Объединяем UID из total_usage и meta, чтобы обработать всех пользователей
+        # даже если у них нет трафика (usage=0), но есть метаданные (IP и т.д.)
+        all_uids = set(total_usage.keys()) | set(meta.keys())
+        logger.info(f"Processing device history for {len(all_uids)} users (from usage: {len(total_usage)}, from meta: {len(meta)})")
+        
         try:
             processed_count = 0
-            for uid, usage in total_usage.items():
+            for uid in all_uids:
                 processed_count += 1
-                logger.debug(f"Processing device history for user {uid} ({processed_count}/{len(total_usage)})")
+                logger.debug(f"Processing device history for user {uid} ({processed_count}/{len(all_uids)})")
+                
+                # Получаем usage из total_usage (может быть 0, если пользователя нет в total_usage)
+                usage = total_usage.get(uid, 0)
                 info = meta.get(uid, {})
                 remote_ip = info.get("remote_ip", "")
                 client_name = info.get("client_name", "unknown")
@@ -271,7 +281,7 @@ class MarzService(MarzServiceBase):
                         # Продолжаем обработку других пользователей
                         continue
             
-            logger.info(f"Processed device history for {processed_count} users")
+            logger.info(f"Processed device history for {processed_count} users (out of {len(all_uids)} total)")
             
             # Отмечаем неактивные устройства
             try:
