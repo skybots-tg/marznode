@@ -213,8 +213,12 @@ class MarzService(MarzServiceBase):
 
         # Сохраняем данные в историю устройств с проверкой лимитов
         logger.info("=== Saving device history and checking limits ===")
+        logger.debug(f"Total usage dict has {len(total_usage)} users: {list(total_usage.keys())}")
         try:
+            processed_count = 0
             for uid, usage in total_usage.items():
+                processed_count += 1
+                logger.debug(f"Processing device history for user {uid} ({processed_count}/{len(total_usage)})")
                 info = meta.get(uid, {})
                 remote_ip = info.get("remote_ip", "")
                 client_name = info.get("client_name", "unknown")
@@ -266,6 +270,8 @@ class MarzService(MarzServiceBase):
                         )
                         # Продолжаем обработку других пользователей
                         continue
+            
+            logger.info(f"Processed device history for {processed_count} users")
             
             # Отмечаем неактивные устройства
             try:

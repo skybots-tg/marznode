@@ -259,21 +259,46 @@ class XrayCore:
         # Завершаем процесс, если он еще существует
         returncode = None
         last_error_lines = []
+        stdout_data = b""
+        stderr_data = b""
+        
         try:
-            if process and process.returncode is None:
-                # Ждем завершения процесса и получаем оставшиеся данные
-                stdout_data, stderr_data = await process.communicate()
+            # Проверяем, завершился ли процесс
+            if process:
+                # Если процесс еще не завершился, ждем его завершения
+                if process.returncode is None:
+                    try:
+                        # Ждем завершения процесса и получаем оставшиеся данные
+                        stdout_data, stderr_data = await asyncio.wait_for(
+                            process.communicate(), 
+                            timeout=5.0
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning("Timeout waiting for Xray process to exit, checking returncode")
+                    except Exception as e:
+                        logger.error(f"Error waiting for process to exit: {e}", exc_info=True)
+                
+                # Получаем returncode (может быть None, если процесс еще не завершился)
+                returncode = process.returncode
+                
+                # Если returncode все еще None, пытаемся получить его через wait()
+                if returncode is None:
+                    try:
+                        returncode = await asyncio.wait_for(process.wait(), timeout=1.0)
+                    except (asyncio.TimeoutError, ProcessLookupError):
+                        # Процесс уже завершился или не существует
+                        returncode = getattr(process, 'returncode', None)
                 
                 # Сохраняем последние строки из stderr для диагностики
                 if stderr_data:
                     stderr_lines = stderr_data.decode(errors="ignore").strip().split('\n')
                     # Берем последние 10 строк, которые могут содержать ошибку
                     last_error_lines = [line.strip() for line in stderr_lines[-10:] if line.strip()]
-                
-                returncode = process.returncode
         except Exception as e:
             logger.error(f"Error communicating with process: {e}", exc_info=True)
-            returncode = process.returncode if process else None
+            # Пытаемся получить returncode в любом случае
+            if process:
+                returncode = getattr(process, 'returncode', None)
         
         # Логируем причину остановки с деталями
         if self.restarting:
@@ -283,14 +308,18 @@ class XrayCore:
                 f"Xray stopped/died unexpectedly (returncode={returncode})"
             )
             
-            # Логируем последние строки из буфера логов, которые могут содержать ошибку
+            # Логируем последние строки из буфера логов
             if self._logs_buffer:
                 recent_logs = list(self._logs_buffer)[-20:]  # Последние 20 строк
                 error_logs = []
+                all_recent_logs = []
+                
                 for log_line in recent_logs:
                     if log_line and log_line != b"":
                         try:
                             line_str = log_line.decode(errors="ignore").strip()
+                            all_recent_logs.append(line_str)
+                            
                             # Ищем строки с ошибками, предупреждениями или критическими сообщениями
                             if any(keyword in line_str.lower() for keyword in 
                                    ['error', 'failed', 'fatal', 'panic', 'crash', 'exception', 
@@ -299,10 +328,17 @@ class XrayCore:
                         except Exception:
                             pass
                 
+                # Всегда логируем последние строки перед остановкой
+                if all_recent_logs:
+                    logger.info(f"Last {len(all_recent_logs)} log lines from Xray before stop:")
+                    for log_line in all_recent_logs[-10:]:  # Последние 10 строк
+                        logger.info(f"  Xray: {log_line}")
+                
+                # Отдельно логируем ошибки, если они есть
                 if error_logs:
-                    logger.error("Recent error/warning messages from Xray logs:")
+                    logger.error("Error/warning messages found in Xray logs:")
                     for err_line in error_logs[-10:]:  # Последние 10 ошибок
-                        logger.error(f"  Xray: {err_line}")
+                        logger.error(f"  Xray ERROR: {err_line}")
             
             # Логируем последние строки из stderr
             if last_error_lines:
@@ -311,10 +347,25 @@ class XrayCore:
                     logger.error(f"  Xray stderr: {err_line}")
             
             # Если returncode не 0, это явная ошибка
-            if returncode and returncode != 0:
-                logger.error(
-                    f"Xray process exited with non-zero return code: {returncode}. "
-                    f"This usually indicates a configuration error or crash."
+            if returncode is not None:
+                if returncode == 0:
+                    logger.info("Xray process exited normally (returncode=0)")
+                elif returncode < 0:
+                    # Процесс был убит сигналом
+                    signal_num = -returncode
+                    logger.error(
+                        f"Xray process was killed by signal {signal_num} (returncode={returncode}). "
+                        f"This usually indicates the process was terminated externally (SIGTERM={15}, SIGKILL={9})."
+                    )
+                else:
+                    logger.error(
+                        f"Xray process exited with non-zero return code: {returncode}. "
+                        f"This usually indicates a configuration error or crash."
+                    )
+            else:
+                logger.warning(
+                    "Could not determine Xray process return code. "
+                    "Process may have been killed before it could exit normally."
                 )
         
         self.stop_event.set()
