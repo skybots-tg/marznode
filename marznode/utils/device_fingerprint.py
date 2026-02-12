@@ -173,6 +173,3 @@ def extract_device_info_from_meta(meta: dict) -> dict:
 
 
 
-
-
-
