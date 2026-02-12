@@ -3,6 +3,7 @@ The grpc Service to add/update/delete users
 Right now it only supports Xray but that is subject to change
 """
 
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -353,9 +354,60 @@ class MarzService(MarzServiceBase):
         self, stream: Stream[RestartBackendRequest, Empty]
     ) -> None:
         message = await stream.recv_message()
-
-        await self._backends[message.backend_name].restart(message.config.configuration)
-        await stream.send_message(Empty())
+        
+        if message is None:
+            logger.error("RestartBackend called with None message")
+            raise GRPCError(Status.INVALID_ARGUMENT, "Request message is None")
+        
+        backend_name = message.backend_name
+        logger.info(f"=== RestartBackend CALLED for backend: {backend_name} ===")
+        
+        # Проверяем, существует ли backend
+        if backend_name not in self._backends:
+            logger.error(f"Backend {backend_name} not found. Available backends: {list(self._backends.keys())}")
+            raise GRPCError(Status.NOT_FOUND, f"Backend '{backend_name}' not found")
+        
+        # Проверяем наличие конфигурации
+        if not message.config or not message.config.configuration:
+            logger.warning(f"RestartBackend called for {backend_name} without configuration, using existing config")
+            config = None
+        else:
+            config = message.config.configuration
+            logger.info(f"Restarting backend {backend_name} with new configuration (length: {len(config)} bytes)")
+        
+        try:
+            # Добавляем таймаут для операции перезапуска (30 секунд)
+            await asyncio.wait_for(
+                self._backends[backend_name].restart(config),
+                timeout=30.0
+            )
+            logger.info(f"Backend {backend_name} restarted successfully")
+        except KeyError as e:
+            logger.error(f"Backend {backend_name} not found in backends dict: {e}")
+            raise GRPCError(Status.NOT_FOUND, f"Backend '{backend_name}' not found")
+        except ValueError as e:
+            logger.error(f"Invalid configuration for backend {backend_name}: {e}", exc_info=True)
+            raise GRPCError(Status.INVALID_ARGUMENT, f"Invalid configuration: {str(e)}")
+        except RuntimeError as e:
+            logger.error(f"Runtime error restarting backend {backend_name}: {e}", exc_info=True)
+            raise GRPCError(Status.INTERNAL, f"Failed to restart backend: {str(e)}")
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout restarting backend {backend_name} (exceeded 30 seconds)")
+            raise GRPCError(Status.DEADLINE_EXCEEDED, f"Backend restart timeout (exceeded 30 seconds)")
+        except Exception as e:
+            logger.error(
+                f"Unexpected error restarting backend {backend_name}: {e}",
+                exc_info=True
+            )
+            raise GRPCError(Status.INTERNAL, f"Unexpected error: {str(e)}")
+        
+        # Отправляем успешный ответ
+        try:
+            await stream.send_message(Empty())
+            logger.info(f"RestartBackend response sent successfully for {backend_name}")
+        except Exception as e:
+            logger.error(f"Error sending RestartBackend response: {e}", exc_info=True)
+            # Не поднимаем исключение здесь, т.к. перезапуск уже выполнен
 
     async def GetBackendStats(self, stream: Stream[Backend, BackendStats]):
         backend = await stream.recv_message()

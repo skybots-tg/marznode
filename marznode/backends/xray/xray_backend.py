@@ -114,13 +114,21 @@ class XrayBackend(VPNBackend):
         self._inbounds = list()
 
     async def restart(self, backend_config: str | None) -> list[Inbound] | None:
+        logger.info("=== XrayBackend.restart() CALLED ===")
+        logger.info(f"Restarting Xray backend, has new config: {backend_config is not None}")
+        
         # xray_config = backend_config if backend_config else self._config
         await self._restart_lock.acquire()
+        logger.debug("Acquired restart lock")
         try:
             if not backend_config:
+                logger.info("Restarting Xray with existing config")
                 return await self._runner.restart(self._config)
+            logger.info("Restarting Xray with new config (stop + start)")
             await self.stop()
+            logger.info("Xray stopped, starting with new config")
             await self.start(backend_config)
+            logger.info("Xray restarted successfully")
         except Exception as e:
             logger.error(
                 f"Error during Xray restart: {e}",
@@ -129,6 +137,7 @@ class XrayBackend(VPNBackend):
             raise
         finally:
             self._restart_lock.release()
+            logger.debug("Released restart lock")
 
     async def add_user(self, user: User, inbound: Inbound):
         email = f"{user.id}.{user.username}"

@@ -111,28 +111,43 @@ class XrayCore:
 
     async def stop(self):
         """stops xray if it is started"""
+        logger.info(f"=== XrayCore.stop() CALLED (restarting={self.restarting}) ===")
         if not self.running:
+            logger.debug("Xray is not running, nothing to stop")
             return
 
+        logger.info("Terminating Xray process")
         self._process.terminate()
         try:
             await asyncio.wait_for(self._process.wait(), timeout=3)
+            logger.info(f"Xray process terminated (returncode={self._process.returncode})")
         except asyncio.TimeoutError:
-            logger.debug("killing xray process")
+            logger.warning("Xray process did not terminate in time, killing it")
             self._process.kill()
+            try:
+                await self._process.wait()
+                logger.info(f"Xray process killed (returncode={self._process.returncode})")
+            except Exception as e:
+                logger.error(f"Error waiting for killed process: {e}")
         self._process = None
+        logger.info("Xray stop completed")
 
     async def restart(self, config: XrayConfig):
         """restart xray"""
         if self.restarting is True:
+            logger.warning("Xray restart already in progress, skipping")
             return
 
         try:
+            logger.info("=== XrayCore.restart() STARTING ===")
             self.restarting = True
-            logger.warning("Restarting Xray core")
+            logger.warning("Restarting Xray core (restarting flag set to True)")
             await self.stop()
+            logger.info("Xray stopped, starting with new config")
             await self.start(config)
+            logger.info("Xray restarted successfully")
         finally:
+            logger.info("Setting restarting flag to False")
             self.restarting = False
 
     def _cleanup_old_meta(self):
@@ -301,11 +316,12 @@ class XrayCore:
                 returncode = getattr(process, 'returncode', None)
         
         # Логируем причину остановки с деталями
+        logger.info(f"Checking restart flag: restarting={self.restarting}")
         if self.restarting:
             logger.info("Xray stopped (planned restart)")
         else:
             logger.warning(
-                f"Xray stopped/died unexpectedly (returncode={returncode})"
+                f"Xray stopped/died unexpectedly (returncode={returncode}, restarting={self.restarting})"
             )
             
             # Логируем последние строки из буфера логов
