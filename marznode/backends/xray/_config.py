@@ -1,12 +1,15 @@
 import json
+import logging
 from collections import defaultdict
 
 import commentjson
 
 from marznode.config import XRAY_EXECUTABLE_PATH, XRAY_VLESS_REALITY_FLOW, DEBUG
-from ._utils import get_x25519
+from ._utils import get_x25519_with_error
 from ...models import Inbound
 from ...storage import BaseStorage
+
+logger = logging.getLogger(__name__)
 
 transport_map = defaultdict(
     lambda: "tcp",
@@ -149,14 +152,43 @@ class XrayConfig(dict):
                         settings["flow"] = XRAY_VLESS_REALITY_FLOW
 
                     pvk = tls_settings.get("privateKey")
+                    tag = inbound.get("tag", "unknown")
 
-                    x25519 = get_x25519(XRAY_EXECUTABLE_PATH, pvk)
-                    if x25519 is None:
-                        raise RuntimeError(
-                            f"Failed to generate x25519 keys for inbound {inbound.get('tag', 'unknown')}. "
-                            f"Check that Xray is properly installed at {XRAY_EXECUTABLE_PATH}"
+                    x25519, reason = get_x25519_with_error(
+                        XRAY_EXECUTABLE_PATH, pvk
+                    )
+                    if x25519 is None and pvk:
+                        # The provided private key is most likely malformed for
+                        # this xray version. Fall back to a freshly generated
+                        # pair so the panel does not crash on a single bad
+                        # inbound — the specific inbound will still be broken
+                        # until the admin fixes the config, but the rest of
+                        # the backend keeps working.
+                        logger.warning(
+                            "Failed to derive x25519 public key from privateKey "
+                            "of inbound '%s' (%s). Falling back to a generated "
+                            "keypair; the advertised public key will not match "
+                            "xray's private key until the config is fixed.",
+                            tag,
+                            reason,
                         )
-                    settings["pbk"] = x25519["public_key"]
+                        x25519, reason = get_x25519_with_error(
+                            XRAY_EXECUTABLE_PATH
+                        )
+
+                    if x25519 is None:
+                        logger.error(
+                            "Failed to generate x25519 keys for inbound '%s': "
+                            "%s. Check that Xray is properly installed at %s. "
+                            "Reality parameters for this inbound will be left "
+                            "empty.",
+                            tag,
+                            reason,
+                            XRAY_EXECUTABLE_PATH,
+                        )
+                        settings["pbk"] = ""
+                    else:
+                        settings["pbk"] = x25519["public_key"]
 
                     settings["sid"] = tls_settings.get("shortIds", [""])[0]
 

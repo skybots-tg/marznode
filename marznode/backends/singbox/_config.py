@@ -1,12 +1,15 @@
 import json
+import logging
 
 import commentjson
 
 from marznode.backends.singbox._accounts import accounts_map
-from marznode.backends.xray._utils import get_x25519
+from marznode.backends.xray._utils import get_x25519_with_error
 from marznode.config import XRAY_EXECUTABLE_PATH
 from marznode.models import User, Inbound
 from marznode.storage import BaseStorage
+
+logger = logging.getLogger(__name__)
 
 
 class SingBoxConfig(dict):
@@ -76,14 +79,37 @@ class SingBoxConfig(dict):
                 if inbound["tls"].get("reality", {}).get("enabled"):
                     settings["tls"] = "reality"
                     pvk = inbound["tls"]["reality"].get("private_key")
+                    tag = inbound.get("tag", "unknown")
 
-                    x25519 = get_x25519(XRAY_EXECUTABLE_PATH, pvk)
-                    if x25519 is None:
-                        raise RuntimeError(
-                            f"Failed to generate x25519 keys for inbound {inbound.get('tag', 'unknown')}. "
-                            f"Check that Xray is properly installed at {XRAY_EXECUTABLE_PATH}"
+                    x25519, reason = get_x25519_with_error(
+                        XRAY_EXECUTABLE_PATH, pvk
+                    )
+                    if x25519 is None and pvk:
+                        logger.warning(
+                            "Failed to derive x25519 public key from private_key "
+                            "of inbound '%s' (%s). Falling back to a generated "
+                            "keypair; the advertised public key will not match "
+                            "sing-box's private key until the config is fixed.",
+                            tag,
+                            reason,
                         )
-                    settings["pbk"] = x25519["public_key"]
+                        x25519, reason = get_x25519_with_error(
+                            XRAY_EXECUTABLE_PATH
+                        )
+
+                    if x25519 is None:
+                        logger.error(
+                            "Failed to generate x25519 keys for inbound '%s': "
+                            "%s. Check that Xray is properly installed at %s. "
+                            "Reality parameters for this inbound will be left "
+                            "empty.",
+                            tag,
+                            reason,
+                            XRAY_EXECUTABLE_PATH,
+                        )
+                        settings["pbk"] = ""
+                    else:
+                        settings["pbk"] = x25519["public_key"]
 
                     settings["sid"] = inbound["tls"]["reality"].get("short_id", [""])[0]
 
