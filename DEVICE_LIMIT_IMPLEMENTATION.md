@@ -221,10 +221,14 @@ blocked = device_storage.get_blocked_connections()
 
 ### 1. Синхронизация fingerprint алгоритма
 
-**КРИТИЧНО:** Алгоритм в `marznode/utils/device_fingerprint.py::build_device_fingerprint()` 
-ДОЛЖЕН быть ИДЕНТИЧЕН `app/utils/device_fingerprint.py` в Marzneshin.
+**КРИТИЧНО:** Алгоритм в `marznode/utils/device_fingerprint.py::build_device_fingerprint()`
+ДОЛЖЕН быть побайтно идентичен `app/utils/device_fingerprint.py` в Marzneshin.
+Совместимость закреплена golden-тестами в `tests/test_device_fingerprint.py`
+обоих проектов — не трогайте векторы, не синхронизировав обе стороны.
 
-Текущий алгоритм (version 1):
+Поддерживаются две версии хеша одновременно:
+
+**v1 (legacy, сохранён только для обратной совместимости):**
 ```python
 components = [
     str(user_id),
@@ -234,8 +238,44 @@ components = [
     user_agent or "",
 ]
 source = "|".join(components)
-fingerprint = hashlib.sha256(source.encode()).hexdigest()
+fingerprint = hashlib.sha256(source.encode("utf-8", errors="replace")).hexdigest()
 ```
+
+У v1 есть известные недостатки, которые в v2 исправлены:
+
+- коллизия на разделителе `|` (`("a", "b|c")` и `("a|b", "c")` дают одинаковый хеш);
+- нестабильность из-за различий в регистре/пробелах `client_name` (каждое обновление клиента = новое устройство);
+- любое пустое поле приводит к вкладу нулевой длины — компоненты могут быть неразличимы.
+
+**v2 (текущий default):**
+```python
+payload = {
+    "v": 2,
+    "uid": int(user_id),
+    "cn": (normalize_client_name(client_name) or "").strip(),
+    "tls": (tls_fingerprint or "").strip().lower(),
+    "os":  (os_guess or "").strip().lower(),
+    "ua":  (user_agent or "").strip(),
+}
+source = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+fingerprint = hashlib.sha256(source.encode("utf-8", errors="replace")).hexdigest()
+```
+
+Что изменилось:
+
+- **Версия в payload** — исключает коллизии между v1 и v2 и даёт безопасное поле для будущих миграций.
+- **JSON-сериализация** — разделитель экранируется, устраняется v1-коллизия.
+- **`normalize_client_name`** — `v2rayNG`/`V2RAYNG`/`v2rayng` дают один fingerprint.
+- **`errors="replace"`** — surrogate-символы в User-Agent больше не роняют обработчик коннекта.
+
+### 1a. Dual-режим и миграция v1 → v2
+
+- `build_device_fingerprint(...)` без параметра `version` возвращает **v2**.
+- `build_device_fingerprint(..., version=1)` сохранён для расчёта легаси-хеша.
+- `build_device_fingerprints_all(...)` возвращает `{1: hash_v1, 2: hash_v2}` — используется на точках проверки.
+- `is_device_allowed` принимает как одиночный хеш, так и итерируемый набор — устройство считается разрешённым, если **любая** из версий найдена в `allowed_fingerprints`.
+- В Marzneshin `device_tracker.track_user_connection` делает lazy-lookup: сначала ищет запись по v2, при промахе — по v1. Существующие v1-записи продолжают работать без ручной миграции.
+- Новые записи всегда создаются как v2; v1 естественно отомрут, когда пользователь сменит клиент.
 
 ### 2. Когда синхронизировать allowed_fingerprints
 
@@ -259,7 +299,20 @@ if device_limit == 0:
 # Иначе проверять fingerprint
 ```
 
-### 4. Производительность
+### 4. Ограничение: multi-node leak лимита устройств
+
+Проверка лимита в `is_device_allowed` на marznode **не атомарна** между узлами.
+При `len(allowed_fingerprints) < device_limit` каждая marznode-нода независимо
+пропускает одно «новое» устройство, прежде чем Marzneshin разошлёт обновлённый
+список хешей. Фактический верхний предел — `N_нод × device_limit`.
+
+Истинный жёсткий потолок достижим только если решение принимает Marzneshin
+централизованно (текущая реализация `device_tracker.py` в Marzneshin это и
+делает при создании `UserDevice`). На стороне marznode проверка остаётся
+только отсекающей: блокируются устройства, которых нет в allowed-листе,
+когда список уже полон.
+
+### 5. Производительность
 
 Реализованные оптимизации:
 - Используется хеш-таблица для быстрой проверки fingerprint

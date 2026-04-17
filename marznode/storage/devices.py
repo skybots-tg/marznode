@@ -4,12 +4,14 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional, Union
 
 from marznode.utils.device_fingerprint import (
+    DEFAULT_FINGERPRINT_VERSION,
     build_device_fingerprint,
-    is_device_allowed,
+    build_device_fingerprints_all,
     extract_device_info_from_meta,
+    is_device_allowed,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,33 +78,42 @@ class DeviceStorage:
     def check_device_allowed(
         self,
         uid: int,
-        fingerprint: str,
+        fingerprint: Union[str, Iterable[str]],
         allowed_fingerprints: list[str],
         device_limit: Optional[int] = None,
         enforce: bool = True,
     ) -> tuple[bool, str]:
         """
         Check if a device is allowed to connect.
-        
+
+        ``fingerprint`` may be a single hash or an iterable of hashes (to
+        match both v1 and v2 fingerprints during the dual-version window).
+
         Returns:
             Tuple of (is_allowed, reason)
         """
         allowed, reason = is_device_allowed(
-            fingerprint=fingerprint,
+            fingerprints=fingerprint,
             allowed_fingerprints=allowed_fingerprints,
             device_limit=device_limit,
             enforce=enforce,
         )
-        
+
         if not allowed:
-            # Track blocked connection attempts
-            if fingerprint not in self._blocked_connections[uid]:
-                self._blocked_connections[uid].append(fingerprint)
+            primary_fp = (
+                fingerprint
+                if isinstance(fingerprint, str)
+                else next(iter(fingerprint), "")
+            )
+            if primary_fp and primary_fp not in self._blocked_connections[uid]:
+                self._blocked_connections[uid].append(primary_fp)
                 logger.warning(
-                    f"Blocked connection for user {uid}: {reason}, "
-                    f"fingerprint={fingerprint[:16]}..."
+                    "Blocked connection for user %s: %s, fingerprint=%s...",
+                    uid,
+                    reason,
+                    primary_fp[:16],
                 )
-        
+
         return allowed, reason
     
     def update_device(
@@ -122,29 +133,32 @@ class DeviceStorage:
         Returns:
             Tuple of (is_allowed, reason) - whether the device is allowed to connect
         """
-        # Calculate device fingerprint
-        fingerprint, _ = build_device_fingerprint(
+        # Compute fingerprints for every supported version.  The allowed
+        # list from Marzneshin may contain either v1 or v2 hashes, so we
+        # match on any overlap; the v2 hash is used as the local storage
+        # key to keep device records stable going forward.
+        fingerprints_by_version = build_device_fingerprints_all(
             user_id=uid,
             client_name=client_name,
             tls_fingerprint=meta.get("tls_fingerprint", ""),
             os_guess=meta.get("os_guess", ""),
             user_agent=meta.get("user_agent", ""),
         )
-        
-        # Check if device is allowed (if enforcement is enabled)
+        fingerprint = fingerprints_by_version[DEFAULT_FINGERPRINT_VERSION]
+
         if enforce_limit and allowed_fingerprints is not None:
             is_allowed, reason = self.check_device_allowed(
                 uid=uid,
-                fingerprint=fingerprint,
+                fingerprint=tuple(fingerprints_by_version.values()),
                 allowed_fingerprints=allowed_fingerprints,
                 device_limit=device_limit,
                 enforce=enforce_limit,
             )
-            
+
             if not is_allowed:
                 return False, reason
-        
-        device_key = fingerprint  # Use fingerprint as device key
+
+        device_key = fingerprint  # Use the v2 fingerprint as device key
         
         # Вычисляем дельту трафика
         last_usage = self._last_usage.get(uid, 0)
