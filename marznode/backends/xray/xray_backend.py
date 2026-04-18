@@ -6,8 +6,14 @@ import logging
 from collections import defaultdict
 
 from marznode.backends.abstract_backend import VPNBackend
-from marznode.backends.xray._config import XrayConfig
+from marznode.backends.xray._config import XrayConfig, XrayConfigValidationError
+from marznode.backends.xray._failsafe import read_config_with_failsafe
 from marznode.backends.xray._runner import XrayCore
+from marznode.backends.xray._user_sync import (
+    push_storage_users,
+    restore_users_after_restart,
+    snapshot_users_for_restart,
+)
 from marznode.backends.xray.api import XrayAPI
 from marznode.backends.xray.api.exceptions import (
     EmailExistsError,
@@ -75,9 +81,9 @@ class XrayBackend(VPNBackend):
             f.write(config)
 
     async def add_storage_users(self):
-        for inbound in self._inbounds:
-            for user in await self._storage.list_inbound_users(inbound.tag):
-                await self.add_user(user, inbound)
+        return await push_storage_users(
+            self._storage, self._inbounds, self.add_user
+        )
 
     async def _restart_on_failure(self):
         while True:
@@ -89,17 +95,39 @@ class XrayBackend(VPNBackend):
                 logger.debug("Xray stopped unexpectedly")
                 if XRAY_RESTART_ON_FAILURE:
                     await asyncio.sleep(XRAY_RESTART_ON_FAILURE_INTERVAL)
-                    await self.start()
+                    try:
+                        await self.start()
+                    except Exception as e:
+                        logger.error(
+                            "Auto-restart of xray failed: %s (%s)",
+                            e,
+                            type(e).__name__,
+                            exc_info=True,
+                        )
+                        continue
                     await self.add_storage_users()
 
     async def start(self, backend_config: str | None = None):
         if backend_config is None:
-            with open(self._config_path) as f:
-                backend_config = f.read()
+            backend_config = await read_config_with_failsafe(
+                self._config_path, self.save_config
+            )
         else:
-            self.save_config(json.dumps(json.loads(backend_config), indent=2))
+            try:
+                self.save_config(json.dumps(json.loads(backend_config), indent=2))
+            except (json.JSONDecodeError, OSError) as e:
+                logger.error(
+                    "Failed to persist new xray config to %s: %s",
+                    self._config_path,
+                    e,
+                )
+                raise
         xray_api_port = find_free_port()
-        self._config = XrayConfig(backend_config, api_port=xray_api_port)
+        try:
+            self._config = XrayConfig(backend_config, api_port=xray_api_port)
+        except XrayConfigValidationError as e:
+            logger.error("xray config rejected by validator: %s", e)
+            raise
         self._config.register_inbounds(self._storage)
         self._inbound_tags = {i["tag"] for i in self._config.inbounds}
         self._inbounds = list(self._config.list_inbounds())
@@ -115,34 +143,50 @@ class XrayBackend(VPNBackend):
 
     async def restart(self, backend_config: str | None) -> list[Inbound] | None:
         logger.info("=== XrayBackend.restart() CALLED ===")
-        logger.info(f"Restarting Xray backend, has new config: {backend_config is not None}")
-        
-        # xray_config = backend_config if backend_config else self._config
+        logger.info(
+            "Restarting Xray backend, has new config: %s",
+            backend_config is not None,
+        )
+
         await self._restart_lock.acquire()
         logger.debug("Acquired restart lock")
         try:
             if not backend_config:
                 logger.info("Restarting Xray with existing config")
-                return await self._runner.restart(self._config)
-            
-            # При перезапуске с новым конфигом нужно установить флаг restarting,
-            # чтобы stop() знал, что это запланированный перезапуск
+                result = await self._runner.restart(self._config)
+                # Even a runner-only restart wipes in-memory xray user
+                # state, so push them back in deterministically.
+                try:
+                    await self.add_storage_users()
+                except Exception as e:
+                    logger.error(
+                        "Re-pushing users after runner restart failed: "
+                        "%s (%s)",
+                        e,
+                        type(e).__name__,
+                        exc_info=True,
+                    )
+                return result
+
             logger.info("Restarting Xray with new config (stop + start)")
             self._runner.restarting = True
             logger.info("Set restarting flag to True before stop()")
+            snapshot = await snapshot_users_for_restart(self._storage)
             try:
                 await self.stop()
                 logger.info("Xray stopped, starting with new config")
                 await self.start(backend_config)
                 logger.info("Xray restarted successfully")
+                await restore_users_after_restart(
+                    self._storage, snapshot, self.add_user
+                )
             finally:
-                # Сбрасываем флаг после завершения перезапуска
                 self._runner.restarting = False
                 logger.info("Set restarting flag to False after restart")
         except Exception as e:
             logger.error(
                 f"Error during Xray restart: {e}",
-                exc_info=True
+                exc_info=True,
             )
             raise
         finally:
@@ -170,10 +214,29 @@ class XrayBackend(VPNBackend):
                     f"User {user.username} (id={user.id}) added with device limit: "
                     f"{user.device_limit}, allowed devices: {len(user.allowed_fingerprints)}"
                 )
-        except (EmailExistsError, TagNotFoundError):
+        except EmailExistsError:
             raise
-        except OSError:
-            logger.warning("user addition requested when xray api is down")
+        except TagNotFoundError:
+            logger.error(
+                "add_user: xray rejected user id=%s username=%s — inbound "
+                "tag '%s' is unknown to xray (config drift between marznode "
+                "storage and the running xray instance)",
+                user.id,
+                user.username,
+                inbound.tag,
+            )
+            raise
+        except OSError as e:
+            logger.warning(
+                "add_user: xray API unreachable while pushing user id=%s "
+                "username=%s into inbound=%s: %s (%s). User will be retried "
+                "on next sync / restart.",
+                user.id,
+                user.username,
+                inbound.tag,
+                e,
+                type(e).__name__,
+            )
 
     async def remove_user(self, user: User, inbound: Inbound):
         email = f"{user.id}.{user.username}"

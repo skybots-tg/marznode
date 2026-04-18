@@ -41,6 +41,14 @@ forced_policies = {
   }
 }
 
+API_INBOUND_TAG = "API_INBOUND"
+API_OUTBOUND_TAG = "API"
+
+
+class XrayConfigValidationError(ValueError):
+    """Raised when xray config fails validation before being passed to xray."""
+
+
 def merge_dicts(a, b): # B overrides A dict
     for key, value in b.items():
         if isinstance(value, dict) and key in a and isinstance(a[key], dict):
@@ -75,33 +83,154 @@ class XrayConfig(dict):
         self._resolve_inbounds()
 
         self._apply_api()
+        self._validate_routing()
 
     def _apply_api(self):
+        """Idempotently inject the API service, inbound, and routing rule.
+
+        Safe to call on configs that already contain a manually-defined
+        API_INBOUND or API outbound tag — duplicates are not introduced.
+        """
         self["api"] = {
             "services": ["HandlerService", "StatsService", "LoggerService"],
-            "tag": "API",
+            "tag": API_OUTBOUND_TAG,
         }
         self["stats"] = {}
         if self.get("policy"):
             self["policy"] = merge_dicts(self.get("policy"), forced_policies)
         else:
             self["policy"] = forced_policies
-        inbound = {
+
+        if "inbounds" not in self or not isinstance(self.get("inbounds"), list):
+            self["inbounds"] = []
+
+        existing_api_inbound = next(
+            (i for i in self["inbounds"] if i.get("tag") == API_INBOUND_TAG),
+            None,
+        )
+        api_inbound = {
             "listen": self.api_host,
             "port": self.api_port,
             "protocol": "dokodemo-door",
             "settings": {"address": self.api_host},
-            "tag": "API_INBOUND",
+            "tag": API_INBOUND_TAG,
         }
-        if "inbounds" not in self:
-            self["inbounds"] = []
-        self["inbounds"].insert(0, inbound)
+        if existing_api_inbound is None:
+            self["inbounds"].insert(0, api_inbound)
+        else:
+            # Reuse the slot but enforce our host/port/protocol so the API
+            # client can always reach it on the port we picked.
+            existing_api_inbound.update(api_inbound)
+            logger.debug(
+                "API_INBOUND already present in config; reusing slot and "
+                "forcing port=%s host=%s",
+                self.api_port,
+                self.api_host,
+            )
 
-        rule = {"inboundTag": ["API_INBOUND"], "outboundTag": "API", "type": "field"}
-
-        if "routing" not in self:
+        if "routing" not in self or not isinstance(self.get("routing"), dict):
             self["routing"] = {"rules": []}
-        self["routing"]["rules"].insert(0, rule)
+        if not isinstance(self["routing"].get("rules"), list):
+            self["routing"]["rules"] = []
+
+        api_rule = {
+            "inboundTag": [API_INBOUND_TAG],
+            "outboundTag": API_OUTBOUND_TAG,
+            "type": "field",
+        }
+
+        def _is_api_rule(rule: dict) -> bool:
+            if not isinstance(rule, dict):
+                return False
+            inbound_tags = rule.get("inboundTag") or []
+            if isinstance(inbound_tags, str):
+                inbound_tags = [inbound_tags]
+            return (
+                API_INBOUND_TAG in inbound_tags
+                and rule.get("outboundTag") == API_OUTBOUND_TAG
+            )
+
+        rules = self["routing"]["rules"]
+        existing_api_rule_idx = next(
+            (idx for idx, r in enumerate(rules) if _is_api_rule(r)),
+            None,
+        )
+        if existing_api_rule_idx is None:
+            rules.insert(0, api_rule)
+        elif existing_api_rule_idx != 0:
+            # API rule must be evaluated first or other catch-all rules
+            # could swallow API traffic and break stats/handler calls.
+            rules.insert(0, rules.pop(existing_api_rule_idx))
+            logger.debug("Moved existing API routing rule to index 0")
+
+    def _validate_routing(self):
+        """Pre-flight checks on routing.rules before xray sees the config.
+
+        Catches the common foot-guns that lead to silent breakage:
+          * routing/rules being the wrong shape
+          * the API rule not being first (must be guaranteed by _apply_api)
+          * a user-defined catch-all rule placed BEFORE the API rule that
+            would swallow traffic destined for API_INBOUND
+          * a catch-all rule pointing at the `block` outbound that has no
+            scoping fields (effectively kills all traffic)
+        """
+        routing = self.get("routing")
+        if not isinstance(routing, dict):
+            raise XrayConfigValidationError("routing must be an object")
+        rules = routing.get("rules")
+        if not isinstance(rules, list):
+            raise XrayConfigValidationError("routing.rules must be a list")
+
+        if not rules:
+            return
+
+        # API rule guarantee (defensive — _apply_api already ensures this)
+        first = rules[0]
+        first_inbound_tags = first.get("inboundTag") or []
+        if isinstance(first_inbound_tags, str):
+            first_inbound_tags = [first_inbound_tags]
+        if (
+            API_INBOUND_TAG not in first_inbound_tags
+            or first.get("outboundTag") != API_OUTBOUND_TAG
+        ):
+            raise XrayConfigValidationError(
+                "API routing rule must be the first entry in routing.rules"
+            )
+
+        scoping_fields = (
+            "domain",
+            "ip",
+            "port",
+            "sourcePort",
+            "network",
+            "source",
+            "user",
+            "inboundTag",
+            "protocol",
+            "attrs",
+            "domainMatcher",
+        )
+
+        for idx, rule in enumerate(rules[1:], start=1):
+            if not isinstance(rule, dict):
+                raise XrayConfigValidationError(
+                    f"routing.rules[{idx}] must be an object"
+                )
+            has_scope = any(rule.get(f) for f in scoping_fields)
+            outbound = rule.get("outboundTag") or rule.get("balancerTag")
+            if not has_scope and outbound in {"block", "blocked", "blackhole"}:
+                raise XrayConfigValidationError(
+                    f"routing.rules[{idx}] is an unscoped catch-all that "
+                    f"routes to '{outbound}', which would block ALL traffic"
+                )
+            inbound_tags = rule.get("inboundTag") or []
+            if isinstance(inbound_tags, str):
+                inbound_tags = [inbound_tags]
+            if API_INBOUND_TAG in inbound_tags and outbound != API_OUTBOUND_TAG:
+                raise XrayConfigValidationError(
+                    f"routing.rules[{idx}] re-routes API_INBOUND to "
+                    f"'{outbound}', which would break the xray API"
+                )
 
     def _resolve_inbounds(self):
         for inbound in self["inbounds"]:
