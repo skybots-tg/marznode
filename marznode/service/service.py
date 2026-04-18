@@ -13,6 +13,7 @@ from grpclib.server import Stream
 
 from marznode.backends.abstract_backend import VPNBackend
 from marznode.storage import BaseStorage, DeviceStorage
+from ._device_history import record_device_history
 from .service_grpc import MarzServiceBase
 from .service_pb2 import (
     BackendConfig as BackendConfig_pb2,
@@ -68,14 +69,21 @@ class MarzService(MarzServiceBase):
             await backend.remove_user(user, inbound)
 
     async def _update_user(self, user_data: UserData):
-        user = user_data.user
+        raw = user_data.user
+        incoming_tags = [i.tag for i in user_data.inbounds]
+        logger.info(
+            "_update_user: incoming user id=%s username=%s, inbound tags=%s",
+            raw.id,
+            raw.username,
+            incoming_tags,
+        )
         user = User(
-            id=user.id,
-            username=user.username,
-            key=user.key,
-            device_limit=user.device_limit if user.HasField("device_limit") else None,
-            allowed_fingerprints=list(user.allowed_fingerprints) if user.allowed_fingerprints else [],
-            enforce_device_limit=user.enforce_device_limit,
+            id=raw.id,
+            username=raw.username,
+            key=raw.key,
+            device_limit=raw.device_limit if raw.HasField("device_limit") else None,
+            allowed_fingerprints=list(raw.allowed_fingerprints) if raw.allowed_fingerprints else [],
+            enforce_device_limit=raw.enforce_device_limit,
         )
         storage_user = await self._storage.list_users(user.id)
         if not storage_user and len(user_data.inbounds) > 0:
@@ -112,8 +120,12 @@ class MarzService(MarzServiceBase):
         await self._storage.update_user_inbounds(storage_user, new_inbounds)
 
     async def SyncUsers(self, stream: Stream[UserData, Empty]) -> None:
+        logger.info("=== SyncUsers stream OPENED ===")
+        count = 0
         async for user_data in stream:
+            count += 1
             await self._update_user(user_data)
+        logger.info("=== SyncUsers stream CLOSED, processed %d updates ===", count)
 
     async def FetchBackends(
         self,
@@ -132,25 +144,53 @@ class MarzService(MarzServiceBase):
             )
             for name, backend in self._backends.items()
         ]
+        tag_summary = {
+            b.name: [i.tag for i in b.inbounds] for b in backends
+        }
+        logger.info(
+            "=== FetchBackends CALLED === replying with %d backend(s), "
+            "inbound tags=%s",
+            len(backends),
+            tag_summary,
+        )
         await stream.send_message(BackendsResponse(backends=backends))
 
     async def RepopulateUsers(
         self,
         stream: Stream[UsersData, Empty],
     ) -> None:
-        users_data = (await stream.recv_message()).users_data
+        msg = await stream.recv_message()
+        users_data = msg.users_data
+        logger.info(
+            "=== RepopulateUsers CALLED === incoming=%d users", len(users_data)
+        )
         for user_data in users_data:
             await self._update_user(user_data)
         user_ids = {user_data.user.id for user_data in users_data}
+        removed = 0
         for storage_user in await self._storage.list_users():
             if storage_user.id not in user_ids:
                 await self._remove_user(storage_user, storage_user.inbounds)
                 await self._storage.remove_user(storage_user)
+                removed += 1
+        logger.info(
+            "=== RepopulateUsers DONE === processed=%d incoming, removed=%d "
+            "stale, storage now has %d users",
+            len(users_data),
+            removed,
+            len(await self._storage.list_users() or []),
+        )
         await stream.send_message(Empty())
 
     async def FetchUsersStats(self, stream: Stream[Empty, UsersStats]) -> None:
-        logger.info("=== FetchUsersStats CALLED ===")
         await stream.recv_message()
+        storage_users = await self._storage.list_users() or []
+        logger.info(
+            "=== FetchUsersStats CALLED === storage has %d users, "
+            "%d backend(s) configured",
+            len(storage_users),
+            len(self._backends),
+        )
         
         # суммарный трафик по всем backend'ам
         total_usage: dict[int, int] = defaultdict(int)
@@ -212,90 +252,10 @@ class MarzService(MarzServiceBase):
                     if info.get(key) and not user_meta.get(key):
                         user_meta[key] = info[key]
 
-        # Сохраняем данные в историю устройств с проверкой лимитов
-        logger.info("=== Saving device history and checking limits ===")
-        logger.debug(f"Total usage dict has {len(total_usage)} users: {list(total_usage.keys())}")
-        logger.debug(f"Meta dict has {len(meta)} users: {list(meta.keys())}")
-        
-        # Объединяем UID из total_usage и meta, чтобы обработать всех пользователей
-        # даже если у них нет трафика (usage=0), но есть метаданные (IP и т.д.)
-        all_uids = set(total_usage.keys()) | set(meta.keys())
-        logger.info(f"Processing device history for {len(all_uids)} users (from usage: {len(total_usage)}, from meta: {len(meta)})")
-        
-        try:
-            processed_count = 0
-            for uid in all_uids:
-                processed_count += 1
-                logger.debug(f"Processing device history for user {uid} ({processed_count}/{len(all_uids)})")
-                
-                # Получаем usage из total_usage (может быть 0, если пользователя нет в total_usage)
-                usage = total_usage.get(uid, 0)
-                info = meta.get(uid, {})
-                remote_ip = info.get("remote_ip", "")
-                client_name = info.get("client_name", "unknown")
-                
-                if remote_ip:  # Сохраняем только если есть IP
-                    try:
-                        # Get user info for device limit enforcement
-                        storage_user = await self._storage.list_users(uid)
-                        
-                        # Prepare enforcement parameters
-                        allowed_fingerprints = None
-                        device_limit = None
-                        enforce_limit = False
-                        
-                        if storage_user:
-                            allowed_fingerprints = storage_user.allowed_fingerprints
-                            device_limit = storage_user.device_limit
-                            enforce_limit = storage_user.enforce_device_limit
-                            
-                            if enforce_limit and device_limit is not None:
-                                logger.info(
-                                    f"User {uid} has device limit enforcement enabled: "
-                                    f"limit={device_limit}, allowed={len(allowed_fingerprints)}"
-                                )
-                        
-                        # Update device and check if allowed
-                        is_allowed, reason = self._device_storage.update_device(
-                            uid=uid,
-                            remote_ip=remote_ip,
-                            client_name=client_name,
-                            current_usage=usage,
-                            meta=info,
-                            allowed_fingerprints=allowed_fingerprints,
-                            device_limit=device_limit,
-                            enforce_limit=enforce_limit,
-                        )
-                        
-                        if not is_allowed:
-                            logger.warning(
-                                f"Device blocked for user {uid}: {reason}, "
-                                f"ip={remote_ip}, client={client_name}"
-                            )
-                        else:
-                            logger.debug(f"Saved device for user {uid}: {remote_ip}:{client_name}")
-                    except Exception as e:
-                        logger.error(
-                            f"Error saving device history for user {uid}: {e}",
-                            exc_info=True
-                        )
-                        # Продолжаем обработку других пользователей
-                        continue
-            
-            logger.info(f"Processed device history for {processed_count} users (out of {len(all_uids)} total)")
-            
-            # Отмечаем неактивные устройства
-            try:
-                self._device_storage.mark_inactive_devices()
-            except Exception as e:
-                logger.error(f"Error marking inactive devices: {e}", exc_info=True)
-        except Exception as e:
-            logger.error(
-                f"Critical error in device history saving: {e}",
-                exc_info=True
-            )
-            # Продолжаем выполнение, чтобы отправить статистику
-        
+        await record_device_history(
+            self._device_storage, self._storage, total_usage, meta
+        )
+
         # собираем ответ
         logger.debug(f"Total usage: {total_usage}, Meta: {meta}")
         user_stats = []
