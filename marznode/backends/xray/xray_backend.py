@@ -11,6 +11,7 @@ from marznode.backends.xray._failsafe import read_config_with_failsafe
 from marznode.backends.xray._runner import XrayCore
 from marznode.backends.xray._user_sync import (
     push_storage_users,
+    reconcile_xray_users,
     restore_users_after_restart,
     snapshot_users_for_restart,
 )
@@ -19,6 +20,7 @@ from marznode.backends.xray.api.exceptions import (
     EmailExistsError,
     EmailNotFoundError,
     TagNotFoundError,
+    XConnectionError,
 )
 from marznode.backends.xray.api.types.account import accounts_map
 from marznode.config import XRAY_RESTART_ON_FAILURE, XRAY_RESTART_ON_FAILURE_INTERVAL
@@ -55,8 +57,14 @@ class XrayBackend(VPNBackend):
         self._device_check_interval = 60  # Check devices every 60 seconds
         self._device_enforcement_enabled = False
         
+        # Reconcile loop: heals the "users in storage but not in xray
+        # runtime" drift caused by ConnectionRefused races between
+        # RestartBackend and the panel's RepopulateUsers push.
+        self._reconcile_interval = 120
+
         asyncio.create_task(self._restart_on_failure())
         asyncio.create_task(self._periodic_device_check())
+        asyncio.create_task(self._periodic_user_reconcile())
 
     @property
     def running(self) -> bool:
@@ -133,6 +141,54 @@ class XrayBackend(VPNBackend):
         self._inbounds = list(self._config.list_inbounds())
         self._api = XrayAPI("127.0.0.1", xray_api_port)
         await self._runner.start(self._config)
+        await self._wait_for_api_ready(xray_api_port)
+
+    async def _wait_for_api_ready(
+        self, port: int, timeout: float = 10.0, poll: float = 0.25
+    ) -> None:
+        """Block until the freshly-started xray actually accepts API calls.
+
+        Without this, the panel's RepopulateUsers push that follows
+        RestartBackend can race the xray boot — every add_inbound_user
+        then fails with ConnectionRefusedError and the user silently
+        ends up in storage but never in xray runtime.
+        """
+        deadline = asyncio.get_event_loop().time() + timeout
+        attempts = 0
+        last_error: Exception | None = None
+        while asyncio.get_event_loop().time() < deadline:
+            attempts += 1
+            try:
+                await self._api.get_users_stats(reset=False)
+                logger.info(
+                    "xray API ready on 127.0.0.1:%d after %d probe(s)",
+                    port,
+                    attempts,
+                )
+                return
+            except (OSError, ConnectionError) as e:
+                last_error = e
+                await asyncio.sleep(poll)
+            except Exception as e:
+                # Any other exception means the channel is up enough to
+                # respond — that's all we needed.
+                logger.info(
+                    "xray API responsive on 127.0.0.1:%d after %d probe(s) "
+                    "(non-OSError: %s)",
+                    port,
+                    attempts,
+                    type(e).__name__,
+                )
+                return
+        logger.error(
+            "xray API did not become ready on 127.0.0.1:%d within %.1fs "
+            "(%d probes, last error: %s) — proceeding anyway, but the next "
+            "user-sync push may race",
+            port,
+            timeout,
+            attempts,
+            last_error,
+        )
 
     async def stop(self):
         await self._runner.stop()
@@ -180,6 +236,11 @@ class XrayBackend(VPNBackend):
                 await restore_users_after_restart(
                     self._storage, snapshot, self.add_user
                 )
+                # Immediate reconcile so we don't wait for the
+                # periodic loop after a config-changing restart.
+                await reconcile_xray_users(
+                    self._storage, self._inbounds, self._api, self.add_user
+                )
             finally:
                 self._runner.restarting = False
                 logger.info("Set restarting flag to False after restart")
@@ -205,38 +266,49 @@ class XrayBackend(VPNBackend):
             flow=flow,
         )
 
-        try:
-            await self._api.add_inbound_user(inbound.tag, user_account)
-            
-            # Log device limit configuration if enabled
-            if user.enforce_device_limit and user.device_limit is not None:
-                logger.info(
-                    f"User {user.username} (id={user.id}) added with device limit: "
-                    f"{user.device_limit}, allowed devices: {len(user.allowed_fingerprints)}"
+        # Retry on transient network errors (xray API briefly unavailable
+        # during startup / restart). The reconcile loop is the ultimate
+        # safety net, but a few in-line retries close the common case
+        # where xray API becomes ready within a couple of seconds.
+        last_net_error: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                await self._api.add_inbound_user(inbound.tag, user_account)
+                if user.enforce_device_limit and user.device_limit is not None:
+                    logger.info(
+                        f"User {user.username} (id={user.id}) added with "
+                        f"device limit: {user.device_limit}, allowed "
+                        f"devices: {len(user.allowed_fingerprints)}"
+                    )
+                return
+            except EmailExistsError:
+                raise
+            except TagNotFoundError:
+                logger.error(
+                    "add_user: xray rejected user id=%s username=%s — "
+                    "inbound tag '%s' is unknown to xray (config drift "
+                    "between marznode storage and running xray)",
+                    user.id,
+                    user.username,
+                    inbound.tag,
                 )
-        except EmailExistsError:
-            raise
-        except TagNotFoundError:
-            logger.error(
-                "add_user: xray rejected user id=%s username=%s — inbound "
-                "tag '%s' is unknown to xray (config drift between marznode "
-                "storage and the running xray instance)",
-                user.id,
-                user.username,
-                inbound.tag,
-            )
-            raise
-        except OSError as e:
-            logger.warning(
-                "add_user: xray API unreachable while pushing user id=%s "
-                "username=%s into inbound=%s: %s (%s). User will be retried "
-                "on next sync / restart.",
-                user.id,
-                user.username,
-                inbound.tag,
-                e,
-                type(e).__name__,
-            )
+                raise
+            except (OSError, ConnectionError, XConnectionError) as e:
+                last_net_error = e
+                if attempt < 3:
+                    await asyncio.sleep(0.5 * attempt)
+                continue
+        logger.warning(
+            "add_user: xray API unreachable after 3 attempts while pushing "
+            "user id=%s username=%s into inbound=%s: %s (%s). Reconcile "
+            "loop will retry every %ds.",
+            user.id,
+            user.username,
+            inbound.tag,
+            last_net_error,
+            type(last_net_error).__name__ if last_net_error else "?",
+            self._reconcile_interval,
+        )
 
     async def remove_user(self, user: User, inbound: Inbound):
         email = f"{user.id}.{user.username}"
@@ -380,6 +452,31 @@ class XrayBackend(VPNBackend):
             except Exception as e:
                 logger.error(f"Error in periodic device check: {e}", exc_info=True)
     
+    async def _periodic_user_reconcile(self):
+        """Background safety net: heal storage↔xray runtime drift.
+
+        Triggered on the same race condition that produced
+        "6823 in storage / 0 in xray" on node31. Cheap when in sync
+        (one stats call), self-correcting when out of sync.
+        """
+        while True:
+            try:
+                await asyncio.sleep(self._reconcile_interval)
+                if not self.running or not self._api or not self._inbounds:
+                    continue
+                await reconcile_xray_users(
+                    self._storage, self._inbounds, self._api, self.add_user
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(
+                    "_periodic_user_reconcile crashed: %s (%s)",
+                    e,
+                    type(e).__name__,
+                    exc_info=True,
+                )
+
     def get_device_storage(self) -> DeviceStorage:
         """Get device storage instance for external access"""
         return self._device_storage

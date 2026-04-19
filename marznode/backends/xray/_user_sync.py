@@ -15,7 +15,10 @@ from __future__ import annotations
 import logging
 from typing import Awaitable, Callable
 
-from marznode.backends.xray.api.exceptions import EmailExistsError
+from marznode.backends.xray.api.exceptions import (
+    EmailExistsError,
+    XConnectionError,
+)
 from marznode.models import Inbound, User
 from marznode.storage import BaseStorage
 
@@ -176,3 +179,120 @@ async def push_storage_users(
         failed,
     )
     return {"added": added, "skipped": skipped, "failed": failed}
+
+
+async def reconcile_xray_users(
+    storage: BaseStorage,
+    inbounds: list[Inbound],
+    api,
+    add_user: AddUserFn,
+) -> dict:
+    """Compare xray runtime users with storage and push the delta.
+
+    This is the safety net for the race that turned node31 into
+    "6823 in storage, 0 in xray": if `add_inbound_user` failed because
+    xray API was briefly down (ConnectionRefused), the user stays in
+    storage but never gets into xray, and the panel never retries.
+    Running this periodically guarantees eventual consistency.
+
+    Returns counters for diagnostics.
+    """
+    if not inbounds:
+        return {"runtime_emails": 0, "storage_users": 0, "pushed": 0}
+
+    try:
+        api_stats = await api.get_users_stats(reset=False)
+    except OSError as e:
+        logger.warning(
+            "reconcile_xray_users: xray API unreachable (%s), skipping pass",
+            e,
+        )
+        return {"runtime_emails": 0, "storage_users": 0, "pushed": 0}
+    except Exception as e:
+        logger.warning(
+            "reconcile_xray_users: get_users_stats failed: %s (%s)",
+            e,
+            type(e).__name__,
+        )
+        return {"runtime_emails": 0, "storage_users": 0, "pushed": 0}
+
+    # email format used by XrayBackend.add_user is "{user.id}.{username}".
+    runtime_uids: set[int] = set()
+    for stat in api_stats:
+        try:
+            uid = int(stat.name.split(".")[0])
+        except (ValueError, IndexError, AttributeError):
+            continue
+        runtime_uids.add(uid)
+
+    storage_users = await storage.list_users() or []
+    storage_uids = {u.id for u in storage_users}
+
+    missing = storage_uids - runtime_uids
+    if not missing:
+        logger.debug(
+            "reconcile_xray_users: in sync (storage=%d, runtime=%d)",
+            len(storage_uids),
+            len(runtime_uids),
+        )
+        return {
+            "runtime_emails": len(runtime_uids),
+            "storage_users": len(storage_uids),
+            "pushed": 0,
+        }
+
+    logger.warning(
+        "reconcile_xray_users: drift detected — storage has %d users, "
+        "xray runtime has %d unique uids, %d missing in xray",
+        len(storage_uids),
+        len(runtime_uids),
+        len(missing),
+    )
+
+    inbounds_by_tag = {i.tag: i for i in inbounds}
+    pushed = 0
+    failed = 0
+    for user in storage_users:
+        if user.id not in missing:
+            continue
+        for inbound in (user.inbounds or []):
+            target = inbounds_by_tag.get(inbound.tag)
+            if target is None:
+                continue
+            try:
+                await add_user(user, target)
+                pushed += 1
+            except EmailExistsError:
+                pass
+            except (OSError, XConnectionError) as e:
+                failed += 1
+                logger.warning(
+                    "reconcile_xray_users: still cannot push user id=%s "
+                    "into inbound=%s: %s (%s) — will retry next pass",
+                    user.id,
+                    inbound.tag,
+                    e,
+                    type(e).__name__,
+                )
+            except Exception as e:
+                failed += 1
+                logger.error(
+                    "reconcile_xray_users: failed to push user id=%s "
+                    "into inbound=%s: %s (%s)",
+                    user.id,
+                    inbound.tag,
+                    e,
+                    type(e).__name__,
+                    exc_info=True,
+                )
+    logger.warning(
+        "reconcile_xray_users: pushed %d user→inbound entries to recover "
+        "drift, %d still failing",
+        pushed,
+        failed,
+    )
+    return {
+        "runtime_emails": len(runtime_uids),
+        "storage_users": len(storage_uids),
+        "pushed": pushed,
+    }
