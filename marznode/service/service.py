@@ -12,6 +12,7 @@ from grpclib import GRPCError, Status
 from grpclib.server import Stream
 
 from marznode.backends.abstract_backend import VPNBackend
+from marznode.backends.xray.api.exceptions import EmailExistsError
 from marznode.storage import BaseStorage, DeviceStorage
 from ._device_history import record_device_history
 from .service_grpc import MarzServiceBase
@@ -58,7 +59,21 @@ class MarzService(MarzServiceBase):
         for inbound in inbounds:
             backend = self._resolve_tag(inbound.tag)
             logger.debug("adding user `%s` to inbound `%s`", user.username, inbound.tag)
-            await backend.add_user(user, inbound)
+            try:
+                await backend.add_user(user, inbound)
+            except EmailExistsError:
+                # Storage was wiped (e.g. container restart) but the xray
+                # process kept its in-memory user list. The user is already
+                # active on this inbound, so treat this as a no-op instead
+                # of failing the whole RepopulateUsers batch with an
+                # Internal Server Error that the panel can't decode.
+                logger.info(
+                    "user id=%s username=%s already present on inbound `%s`; "
+                    "treating as success and continuing",
+                    user.id,
+                    user.username,
+                    inbound.tag,
+                )
 
     async def _remove_user(self, user: User, inbounds: list[InboundModel]):
         for inbound in inbounds:
