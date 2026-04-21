@@ -3,14 +3,12 @@
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Union
 
 from marznode.utils.device_fingerprint import (
     DEFAULT_FINGERPRINT_VERSION,
-    build_device_fingerprint,
     build_device_fingerprints_all,
-    extract_device_info_from_meta,
     is_device_allowed,
 )
 
@@ -32,28 +30,28 @@ class DeviceInfo:
     downlink: int = 0
     is_active: bool = True
     fingerprint: str = ""  # Device fingerprint for identification
-    
+
     def __post_init__(self):
         if self.first_seen == 0:
             self.first_seen = int(time.time())
         if self.last_seen == 0:
             self.last_seen = self.first_seen
-    
+
     def get_device_key(self) -> str:
         """Generate unique key for this device"""
         # Use fingerprint if available, otherwise fall back to IP:client_name
         if self.fingerprint:
             return self.fingerprint
         return f"{self.remote_ip}:{self.client_name}"
-    
+
     def update(self, new_data: dict, usage_delta: int = 0):
         """Update device info with new data"""
         self.last_seen = int(time.time())
         self.is_active = True
-        
+
         if usage_delta > 0:
             self.total_usage += usage_delta
-        
+
         if "user_agent" in new_data and new_data["user_agent"]:
             self.user_agent = new_data["user_agent"]
         if "protocol" in new_data and new_data["protocol"]:
@@ -68,13 +66,13 @@ class DeviceInfo:
 
 class DeviceStorage:
     """Storage for device connection history"""
-    
+
     def __init__(self, inactivity_timeout: int = 300):  # 5 минут по умолчанию
         self._devices: Dict[int, Dict[str, DeviceInfo]] = defaultdict(dict)
         self._last_usage: Dict[int, int] = {}  # для отслеживания дельты трафика
         self._inactivity_timeout = inactivity_timeout
         self._blocked_connections: Dict[int, List[str]] = defaultdict(list)  # uid -> list of blocked fingerprints
-    
+
     def check_device_allowed(
         self,
         uid: int,
@@ -115,11 +113,11 @@ class DeviceStorage:
                 )
 
         return allowed, reason
-    
+
     def update_device(
-        self, 
-        uid: int, 
-        remote_ip: str, 
+        self,
+        uid: int,
+        remote_ip: str,
         client_name: str,
         current_usage: int,
         meta: dict,
@@ -159,12 +157,12 @@ class DeviceStorage:
                 return False, reason
 
         device_key = fingerprint  # Use the v2 fingerprint as device key
-        
+
         # Вычисляем дельту трафика
         last_usage = self._last_usage.get(uid, 0)
         usage_delta = max(0, current_usage - last_usage)
         self._last_usage[uid] = current_usage
-        
+
         if device_key in self._devices[uid]:
             # Обновляем существующее устройство
             device = self._devices[uid][device_key]
@@ -191,9 +189,9 @@ class DeviceStorage:
                 f"New device for user {uid}: fingerprint={fingerprint[:16]}..., "
                 f"client={client_name}, ip={remote_ip}"
             )
-        
+
         return True, "device allowed"
-    
+
     def mark_inactive_devices(self):
         """Mark devices as inactive if they haven't been seen recently"""
         current_time = int(time.time())
@@ -202,33 +200,33 @@ class DeviceStorage:
                 if device.is_active and (current_time - device.last_seen) > self._inactivity_timeout:
                     device.is_active = False
                     logger.debug(f"Device {device.get_device_key()} for user {uid} marked as inactive")
-    
+
     def get_user_devices(self, uid: int, active_only: bool = False) -> List[DeviceInfo]:
         """Get all devices for a user"""
         if uid not in self._devices:
             return []
-        
+
         devices = list(self._devices[uid].values())
         if active_only:
             devices = [d for d in devices if d.is_active]
-        
+
         # Сортируем по последнему подключению (новые первые)
         devices.sort(key=lambda d: d.last_seen, reverse=True)
         return devices
-    
+
     def get_all_devices(self) -> Dict[int, List[DeviceInfo]]:
         """Get all devices for all users"""
         return {
             uid: self.get_user_devices(uid)
             for uid in self._devices.keys()
         }
-    
+
     def get_blocked_connections(self, uid: Optional[int] = None) -> Dict[int, List[str]]:
         """Get blocked connection attempts"""
         if uid is not None:
             return {uid: self._blocked_connections.get(uid, [])}
         return dict(self._blocked_connections)
-    
+
     def clear_blocked_connections(self, uid: Optional[int] = None):
         """Clear blocked connection history"""
         if uid is not None:
@@ -236,24 +234,24 @@ class DeviceStorage:
                 del self._blocked_connections[uid]
         else:
             self._blocked_connections.clear()
-    
+
     def cleanup_old_devices(self, max_age_seconds: int = 86400 * 7):  # 7 дней
         """Remove devices that haven't been seen for a long time"""
         current_time = int(time.time())
         removed_count = 0
-        
+
         for uid, devices in list(self._devices.items()):
             for device_key, device in list(devices.items()):
                 if (current_time - device.last_seen) > max_age_seconds:
                     del devices[device_key]
                     removed_count += 1
-            
+
             # Удаляем пользователя, если у него не осталось устройств
             if not devices:
                 del self._devices[uid]
-        
+
         if removed_count > 0:
             logger.info(f"Cleaned up {removed_count} old devices")
-        
+
         return removed_count
 

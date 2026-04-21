@@ -5,7 +5,7 @@ import atexit
 import logging
 import re
 import time
-from collections import deque, defaultdict
+from collections import deque
 
 from anyio import create_memory_object_stream, ClosedResourceError, BrokenResourceError
 from anyio.streams.memory import MemoryObjectReceiveStream
@@ -26,7 +26,7 @@ ACCESS_LOG_RE = re.compile(
 
 class XrayCore:
     """runs and captures xray logs"""
-    
+
     # Настройки для оптимизации работы с большими объемами данных
     MAX_META_ENTRIES = 10000  # Максимальное количество записей в кэше метаданных
     META_TTL = 3600  # Время жизни записи в секундах (1 час)
@@ -44,7 +44,7 @@ class XrayCore:
         self._logs_buffer = deque(maxlen=100)
         self._env = {"XRAY_LOCATION_ASSET": assets_path}
         self.stop_event = asyncio.Event()
-        
+
         # Словарь для хранения метаданных пользователей (IP, timestamp)
         # Формат: {uid: {"remote_ip": "1.2.3.4", "timestamp": 1234567890}}
         self._last_meta: dict[int, dict] = {}
@@ -64,10 +64,10 @@ class XrayCore:
         # Настраиваем логирование
         if "log" not in config:
             config["log"] = {}
-        
+
         if config.get("log", {}).get("loglevel") in ("none", "error"):
             config["log"]["loglevel"] = "warning"
-        
+
         # ВСЕГДА устанавливаем access логи для отслеживания IP адресов
         # Перезаписываем существующие настройки
         config["log"]["access"] = "/var/log/xray/access.log"
@@ -86,7 +86,7 @@ class XrayCore:
         self._process.stdin.close()
         await self._process.stdin.wait_closed()
         logger.info("Xray core %s started", self.version)
-        
+
         # Проверяем, что директория для логов существует и доступна для записи
         if os.path.exists(log_dir):
             logger.info(f"Log directory exists: {log_dir}, writable: {os.access(log_dir, os.W_OK)}")
@@ -153,26 +153,26 @@ class XrayCore:
     def _cleanup_old_meta(self):
         """Очищает устаревшие записи метаданных для экономии памяти"""
         current_time = time.time()
-        
+
         # Проверяем, нужна ли очистка
         if current_time - self._last_cleanup < self.CLEANUP_INTERVAL:
             return
-        
+
         self._last_cleanup = current_time
         cutoff_time = current_time - self.META_TTL
-        
+
         # Удаляем устаревшие записи
         expired_uids = [
             uid for uid, meta in self._last_meta.items()
             if meta.get("timestamp", 0) < cutoff_time
         ]
-        
+
         for uid in expired_uids:
             del self._last_meta[uid]
-        
+
         if expired_uids:
             logger.debug(f"Cleaned up {len(expired_uids)} expired metadata entries")
-        
+
         # Если превышен лимит записей, удаляем самые старые
         if len(self._last_meta) > self.MAX_META_ENTRIES:
             # Сортируем по timestamp и удаляем самые старые
@@ -183,12 +183,12 @@ class XrayCore:
             to_remove = len(self._last_meta) - self.MAX_META_ENTRIES
             for uid, _ in sorted_items[:to_remove]:
                 del self._last_meta[uid]
-            
+
             logger.warning(
                 f"Meta cache exceeded limit ({self.MAX_META_ENTRIES}), "
                 f"removed {to_remove} oldest entries"
             )
-    
+
     def _handle_log_line(self, line: str) -> bool:
         """Парсит строку лога для извлечения email и IP пользователя
         
@@ -204,34 +204,34 @@ class XrayCore:
             # Быстрая проверка - содержит ли строка ключевые слова
             if "email:" not in line or "from" not in line:
                 return False
-            
+
             match = ACCESS_LOG_RE.search(line)
             if not match:
                 return False
-            
+
             email = match.group("email")
             ip = match.group("ip")
-            
+
             # Извлекаем uid из email (формат: "uid.username" или просто "uid")
             try:
                 uid = int(email.split(".")[0])
             except (ValueError, IndexError):
                 # Если не удалось извлечь uid, пропускаем
                 return False
-            
+
             # Сохраняем IP и timestamp в метаданные пользователя
             current_time = time.time()
             self._last_meta[uid] = {
                 "remote_ip": ip,
                 "timestamp": current_time
             }
-            
+
             # Периодически очищаем старые записи
             self._cleanup_old_meta()
-            
+
             logger.debug(f"Captured IP {ip} for user {uid} from access log")
             return True
-            
+
         except Exception as e:
             # Не логируем каждую ошибку, чтобы не засорять логи
             logger.debug(f"Error parsing access log line: {e}")
@@ -253,7 +253,7 @@ class XrayCore:
                         except ValueError:
                             pass
                         continue
-                
+
                 # Парсим строку для извлечения метаданных
                 if output and output != b"":
                     try:
@@ -261,7 +261,7 @@ class XrayCore:
                         self._handle_log_line(line)
                     except Exception as e:
                         logger.debug(f"Error handling log line: {e}")
-                
+
                 self._logs_buffer.append(output)
                 if output == b"":
                     """break in case of eof"""
@@ -276,7 +276,7 @@ class XrayCore:
         last_error_lines = []
         stdout_data = b""
         stderr_data = b""
-        
+
         try:
             # Проверяем, завершился ли процесс
             if process:
@@ -285,17 +285,17 @@ class XrayCore:
                     try:
                         # Ждем завершения процесса и получаем оставшиеся данные
                         stdout_data, stderr_data = await asyncio.wait_for(
-                            process.communicate(), 
+                            process.communicate(),
                             timeout=5.0
                         )
                     except asyncio.TimeoutError:
                         logger.warning("Timeout waiting for Xray process to exit, checking returncode")
                     except Exception as e:
                         logger.error(f"Error waiting for process to exit: {e}", exc_info=True)
-                
+
                 # Получаем returncode (может быть None, если процесс еще не завершился)
                 returncode = process.returncode
-                
+
                 # Если returncode все еще None, пытаемся получить его через wait()
                 if returncode is None:
                     try:
@@ -303,7 +303,7 @@ class XrayCore:
                     except (asyncio.TimeoutError, ProcessLookupError):
                         # Процесс уже завершился или не существует
                         returncode = getattr(process, 'returncode', None)
-                
+
                 # Сохраняем последние строки из stderr для диагностики
                 if stderr_data:
                     stderr_lines = stderr_data.decode(errors="ignore").strip().split('\n')
@@ -314,7 +314,7 @@ class XrayCore:
             # Пытаемся получить returncode в любом случае
             if process:
                 returncode = getattr(process, 'returncode', None)
-        
+
         # Логируем причину остановки с деталями
         logger.info(f"Checking restart flag: restarting={self.restarting}")
         if self.restarting:
@@ -323,45 +323,45 @@ class XrayCore:
             logger.warning(
                 f"Xray stopped/died unexpectedly (returncode={returncode}, restarting={self.restarting})"
             )
-            
+
             # Логируем последние строки из буфера логов
             if self._logs_buffer:
                 recent_logs = list(self._logs_buffer)[-20:]  # Последние 20 строк
                 error_logs = []
                 all_recent_logs = []
-                
+
                 for log_line in recent_logs:
                     if log_line and log_line != b"":
                         try:
                             line_str = log_line.decode(errors="ignore").strip()
                             all_recent_logs.append(line_str)
-                            
+
                             # Ищем строки с ошибками, предупреждениями или критическими сообщениями
-                            if any(keyword in line_str.lower() for keyword in 
-                                   ['error', 'failed', 'fatal', 'panic', 'crash', 'exception', 
+                            if any(keyword in line_str.lower() for keyword in
+                                   ['error', 'failed', 'fatal', 'panic', 'crash', 'exception',
                                     'rejected', 'invalid', 'denied', 'refused']):
                                 error_logs.append(line_str)
                         except Exception:
                             pass
-                
+
                 # Всегда логируем последние строки перед остановкой
                 if all_recent_logs:
                     logger.info(f"Last {len(all_recent_logs)} log lines from Xray before stop:")
                     for log_line in all_recent_logs[-10:]:  # Последние 10 строк
                         logger.info(f"  Xray: {log_line}")
-                
+
                 # Отдельно логируем ошибки, если они есть
                 if error_logs:
                     logger.error("Error/warning messages found in Xray logs:")
                     for err_line in error_logs[-10:]:  # Последние 10 ошибок
                         logger.error(f"  Xray ERROR: {err_line}")
-            
+
             # Логируем последние строки из stderr
             if last_error_lines:
                 logger.error("Last error messages from Xray stderr:")
                 for err_line in last_error_lines:
                     logger.error(f"  Xray stderr: {err_line}")
-            
+
             # Если returncode не 0, это явная ошибка
             if returncode is not None:
                 if returncode == 0:
@@ -383,7 +383,7 @@ class XrayCore:
                     "Could not determine Xray process return code. "
                     "Process may have been killed before it could exit normally."
                 )
-        
+
         self.stop_event.set()
 
     def get_logs_stm(self) -> MemoryObjectReceiveStream:
@@ -395,7 +395,7 @@ class XrayCore:
         """makes a copy of the buffer, so it could be read multiple times
         the buffer is never cleared in case logs from xray's exit are useful"""
         return self._logs_buffer.copy()
-    
+
     def _parse_access_log_file(self, log_path: str = "/var/log/xray/access.log", max_lines: int = 500):
         """Парсит файл access.log для извлечения IP адресов пользователей
         
@@ -405,23 +405,23 @@ class XrayCore:
         """
         try:
             import os
-            
+
             if not os.path.exists(log_path):
                 # Файл еще не создан - это нормально для только что запущенного Xray
                 logger.debug(f"Access log file not found yet: {log_path} (waiting for connections)")
                 return
-            
+
             # Читаем последние N строк файла
             with open(log_path, 'rb') as f:
                 # Получаем размер файла
                 f.seek(0, os.SEEK_END)
                 file_size = f.tell()
                 logger.info(f"Access log file size: {file_size} bytes")
-                
+
                 if file_size == 0:
                     logger.warning("Access log file is empty")
                     return
-                
+
                 # Если файл маленький, читаем весь
                 if file_size < max_lines * 200:  # ~200 bytes per line average
                     f.seek(0)
@@ -430,14 +430,14 @@ class XrayCore:
                     # Читаем последние max_lines строк
                     f.seek(max(0, file_size - max_lines * 200))
                     lines = f.readlines()[1:]  # Пропускаем первую неполную строку
-                
+
                 logger.info(f"Read {len(lines)} lines from access log")
-                
+
                 # Показываем пример строки для отладки
                 if lines:
                     sample_line = lines[-1].decode('utf-8', errors='ignore').strip()
                     logger.info(f"Sample log line: {sample_line[:200]}")
-                
+
                 # Парсим последние строки
                 parsed_count = 0
                 for line_bytes in lines[-max_lines:]:
@@ -447,12 +447,12 @@ class XrayCore:
                             parsed_count += 1
                     except Exception as e:
                         logger.debug(f"Error parsing log line: {e}")
-                
+
                 logger.info(f"Successfully parsed {parsed_count} log lines with user data")
-                        
+
         except Exception as e:
             logger.error(f"Error reading access log file: {e}", exc_info=True)
-    
+
     def get_last_meta(self) -> dict[int, dict]:
         """Возвращает последние метаданные по пользователям (IP, user_agent и т.д.)
         
@@ -464,17 +464,17 @@ class XrayCore:
         """
         # Сначала читаем файл логов для получения свежих данных
         self._parse_access_log_file()
-        
+
         # Возвращаем только remote_ip, исключая timestamp
         result = {
             uid: {"remote_ip": meta["remote_ip"]}
             for uid, meta in self._last_meta.items()
             if "remote_ip" in meta
         }
-        
+
         if result:
             logger.debug(f"Returning metadata for {len(result)} users from cache")
-        
+
         return result
 
     @property

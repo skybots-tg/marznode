@@ -51,12 +51,12 @@ class XrayBackend(VPNBackend):
         self._storage = storage
         self._config_path = config_path
         self._restart_lock = asyncio.Lock()
-        
+
         # Device tracking and enforcement
         self._device_storage = DeviceStorage(inactivity_timeout=300)
         self._device_check_interval = 60  # Check devices every 60 seconds
         self._device_enforcement_enabled = False
-        
+
         # Reconcile loop: heals the "users in storage but not in xray
         # runtime" drift caused by ConnectionRefused races between
         # RestartBackend and the panel's RepopulateUsers push.
@@ -348,15 +348,15 @@ class XrayBackend(VPNBackend):
             parts = stat.name.split(">>>")
             if len(parts) < 4:
                 continue
-            
+
             user_email = parts[1]  # "123.username"
             link = parts[3]        # "uplink" / "downlink"
-            
+
             try:
                 uid = int(user_email.split(".")[0])
             except (ValueError, IndexError):
                 continue
-            
+
             if link == "uplink":
                 uplink[uid] += stat.value
             elif link == "downlink":
@@ -364,8 +364,8 @@ class XrayBackend(VPNBackend):
 
         # Получаем метаданные из логов (IP адреса)
         log_meta = self._runner.get_last_meta()
-        
-        logger.info(f"=== XrayBackend.get_users_meta() ===")
+
+        logger.info("=== XrayBackend.get_users_meta() ===")
         logger.info(f"Log metadata from access logs: {len(log_meta)} users")
         for uid, data in list(log_meta.items())[:3]:  # Показываем первые 3
             logger.info(f"  User {uid}: {data}")
@@ -373,33 +373,33 @@ class XrayBackend(VPNBackend):
         # Объединяем данные
         meta: dict[int, dict] = {}
         all_uids = set(uplink.keys()) | set(downlink.keys()) | set(log_meta.keys())
-        
+
         for uid in all_uids:
             user_meta = {
                 "uplink": uplink.get(uid, 0),
                 "downlink": downlink.get(uid, 0),
                 "client_name": "xray",
             }
-            
+
             # Добавляем IP из логов, если он есть
             if uid in log_meta and "remote_ip" in log_meta[uid]:
                 user_meta["remote_ip"] = log_meta[uid]["remote_ip"]
                 logger.debug(f"Added remote_ip for user {uid}: {user_meta['remote_ip']}")
-            
+
             meta[uid] = user_meta
-        
+
         logger.info(f"Returning metadata for {len(meta)} users, {sum(1 for m in meta.values() if 'remote_ip' in m)} with IPs")
         return meta
-    
+
     async def _periodic_device_check(self):
         """Periodically check device connections and enforce limits"""
         while True:
             try:
                 await asyncio.sleep(self._device_check_interval)
-                
+
                 if not self.running or not self._device_enforcement_enabled:
                     continue
-                
+
                 # Get current usage stats and metadata
                 try:
                     usages = await self.get_usages(reset=False)
@@ -407,24 +407,24 @@ class XrayBackend(VPNBackend):
                 except Exception as e:
                     logger.error(f"Error getting stats for device check: {e}")
                     continue
-                
+
                 # Check each user's devices
                 users = await self._storage.list_users()
                 if not users:
                     continue
-                
+
                 for user in users:
                     if not user.enforce_device_limit or user.device_limit is None:
                         continue
-                    
+
                     uid = user.id
                     if uid not in usages or uid not in meta:
                         continue
-                    
+
                     # Update device storage and check if allowed
                     remote_ip = meta[uid].get("remote_ip", "unknown")
                     client_name = meta[uid].get("client_name", "xray")
-                    
+
                     is_allowed, reason = self._device_storage.update_device(
                         uid=uid,
                         remote_ip=remote_ip,
@@ -435,7 +435,7 @@ class XrayBackend(VPNBackend):
                         device_limit=user.device_limit,
                         enforce_limit=user.enforce_device_limit,
                     )
-                    
+
                     if not is_allowed:
                         logger.warning(
                             f"Device limit violation for user {user.username} (id={uid}): {reason}"
@@ -445,13 +445,13 @@ class XrayBackend(VPNBackend):
                         # 1. Remove user from xray temporarily
                         # 2. Add to blacklist route
                         # 3. Report to Marzneshin for action
-                
+
                 # Mark inactive devices
                 self._device_storage.mark_inactive_devices()
-                
+
             except Exception as e:
                 logger.error(f"Error in periodic device check: {e}", exc_info=True)
-    
+
     async def _periodic_user_reconcile(self):
         """Background safety net: heal storage↔xray runtime drift.
 
@@ -480,7 +480,7 @@ class XrayBackend(VPNBackend):
     def get_device_storage(self) -> DeviceStorage:
         """Get device storage instance for external access"""
         return self._device_storage
-    
+
     def set_device_enforcement(self, enabled: bool):
         """Enable or disable device limit enforcement"""
         self._device_enforcement_enabled = enabled

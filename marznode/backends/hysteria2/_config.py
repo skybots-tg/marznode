@@ -35,7 +35,7 @@ class HysteriaConfig:
             try:
                 obfs_type = loaded_config["obfs"]["type"]
                 obfs_password = loaded_config["obfs"][obfs_type]["password"]
-            except:
+            except (KeyError, TypeError):
                 pass
 
         self._inbound = {

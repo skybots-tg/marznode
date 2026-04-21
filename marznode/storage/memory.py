@@ -57,7 +57,7 @@ class MemoryStorage(BaseStorage):
         tag = inbound if isinstance(inbound, str) else inbound.tag
         if tag in self.storage["inbounds"]:
             self.storage["inbounds"].pop(tag)
-        for user_id, user in self.storage["users"].items():
+        for user in self.storage["users"].values():
             user.inbounds = list(filter(lambda inb: inb.tag != tag, user.inbounds))
 
     async def flush_users(self):

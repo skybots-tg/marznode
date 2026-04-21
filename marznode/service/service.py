@@ -206,7 +206,7 @@ class MarzService(MarzServiceBase):
             len(storage_users),
             len(self._backends),
         )
-        
+
         # суммарный трафик по всем backend'ам
         total_usage: dict[int, int] = defaultdict(int)
         # раздельный RX/TX (если backend умеет)
@@ -216,10 +216,10 @@ class MarzService(MarzServiceBase):
         meta: dict[int, dict[str, str]] = {}
 
         logger.info(f"Processing {len(self._backends)} backends")
-        
+
         for backend_name, backend in self._backends.items():
             logger.info(f"Processing backend: {backend_name}, type: {type(backend).__name__}")
-            
+
             # 1) как и раньше — usage
             stats = await backend.get_usages()
             logger.info(f"  Got usage stats for {len(stats)} users")
@@ -231,7 +231,7 @@ class MarzService(MarzServiceBase):
             if not get_meta:
                 logger.warning(f"  Backend {backend_name} has NO get_users_meta method!")
                 continue
-            
+
             logger.info(f"  Backend {backend_name} has get_users_meta, calling it...")
 
             try:
@@ -244,24 +244,24 @@ class MarzService(MarzServiceBase):
             for uid, info in backend_meta.items():
                 # info — обычный dict
                 user_meta = meta.setdefault(uid, {})
-                
+
                 # не затираем уже известные поля, если другой backend успел их заполнить
                 if info.get("remote_ip") and not user_meta.get("remote_ip"):
                     user_meta["remote_ip"] = info["remote_ip"]
-                
+
                 if info.get("client_name") and not user_meta.get("client_name"):
                     user_meta["client_name"] = info["client_name"]
                 elif not user_meta.get("client_name"):
                     user_meta["client_name"] = backend_name
-                
+
                 if info.get("user_agent") and not user_meta.get("user_agent"):
                     user_meta["user_agent"] = info["user_agent"]
-                
+
                 if "uplink" in info:
                     total_uplink[uid] += int(info["uplink"])
                 if "downlink" in info:
                     total_downlink[uid] += int(info["downlink"])
-                
+
                 # на будущее — протокол, tls_fp, etc
                 for key in ("protocol", "tls_fingerprint"):
                     if info.get(key) and not user_meta.get(key):
@@ -289,9 +289,9 @@ class MarzService(MarzServiceBase):
                     tls_fingerprint=info.get("tls_fingerprint", ""),
                 )
             )
-        
+
         # Логируем что отправляем
-        logger.info(f"=== FetchUsersStats: Sending gRPC response ===")
+        logger.info("=== FetchUsersStats: Sending gRPC response ===")
         logger.info(f"Total users in response: {len(user_stats)}")
         for us in user_stats[:5]:  # Показываем первые 5
             logger.info(
@@ -301,7 +301,7 @@ class MarzService(MarzServiceBase):
             )
         if len(user_stats) > 5:
             logger.info(f"  ... and {len(user_stats) - 5} more users")
-        
+
         await stream.send_message(UsersStats(users_stats=user_stats))
 
     async def StreamBackendLogs(
@@ -329,19 +329,19 @@ class MarzService(MarzServiceBase):
         self, stream: Stream[RestartBackendRequest, Empty]
     ) -> None:
         message = await stream.recv_message()
-        
+
         if message is None:
             logger.error("RestartBackend called with None message")
             raise GRPCError(Status.INVALID_ARGUMENT, "Request message is None")
-        
+
         backend_name = message.backend_name
         logger.info(f"=== RestartBackend CALLED for backend: {backend_name} ===")
-        
+
         # Проверяем, существует ли backend
         if backend_name not in self._backends:
             logger.error(f"Backend {backend_name} not found. Available backends: {list(self._backends.keys())}")
             raise GRPCError(Status.NOT_FOUND, f"Backend '{backend_name}' not found")
-        
+
         # Проверяем наличие конфигурации
         if not message.config or not message.config.configuration:
             logger.warning(f"RestartBackend called for {backend_name} without configuration, using existing config")
@@ -349,7 +349,7 @@ class MarzService(MarzServiceBase):
         else:
             config = message.config.configuration
             logger.info(f"Restarting backend {backend_name} with new configuration (length: {len(config)} bytes)")
-        
+
         try:
             # Добавляем таймаут для операции перезапуска (30 секунд)
             await asyncio.wait_for(
@@ -359,23 +359,23 @@ class MarzService(MarzServiceBase):
             logger.info(f"Backend {backend_name} restarted successfully")
         except KeyError as e:
             logger.error(f"Backend {backend_name} not found in backends dict: {e}")
-            raise GRPCError(Status.NOT_FOUND, f"Backend '{backend_name}' not found")
+            raise GRPCError(Status.NOT_FOUND, f"Backend '{backend_name}' not found") from e
         except ValueError as e:
             logger.error(f"Invalid configuration for backend {backend_name}: {e}", exc_info=True)
-            raise GRPCError(Status.INVALID_ARGUMENT, f"Invalid configuration: {str(e)}")
+            raise GRPCError(Status.INVALID_ARGUMENT, f"Invalid configuration: {str(e)}") from e
         except RuntimeError as e:
             logger.error(f"Runtime error restarting backend {backend_name}: {e}", exc_info=True)
-            raise GRPCError(Status.INTERNAL, f"Failed to restart backend: {str(e)}")
-        except asyncio.TimeoutError:
+            raise GRPCError(Status.INTERNAL, f"Failed to restart backend: {str(e)}") from e
+        except asyncio.TimeoutError as e:
             logger.error(f"Timeout restarting backend {backend_name} (exceeded 30 seconds)")
-            raise GRPCError(Status.DEADLINE_EXCEEDED, f"Backend restart timeout (exceeded 30 seconds)")
+            raise GRPCError(Status.DEADLINE_EXCEEDED, "Backend restart timeout (exceeded 30 seconds)") from e
         except Exception as e:
             logger.error(
                 f"Unexpected error restarting backend {backend_name}: {e}",
                 exc_info=True
             )
-            raise GRPCError(Status.INTERNAL, f"Unexpected error: {str(e)}")
-        
+            raise GRPCError(Status.INTERNAL, f"Unexpected error: {str(e)}") from e
+
         # Отправляем успешный ответ
         try:
             await stream.send_message(Empty())
@@ -393,17 +393,17 @@ class MarzService(MarzServiceBase):
             )
         running = self._backends[backend.name].running
         await stream.send_message(BackendStats(running=running))
-    
+
     async def FetchUserDevices(
         self, stream: Stream[UserDevicesRequest, UserDevicesHistory]
     ) -> None:
         """Получить историю устройств конкретного пользователя"""
         request = await stream.recv_message()
         logger.info(f"=== FetchUserDevices CALLED for user {request.uid} ===")
-        
+
         active_only = request.active_only if request.active_only else False
         devices = self._device_storage.get_user_devices(request.uid, active_only=active_only)
-        
+
         # Конвертируем в protobuf формат
         device_list = []
         for device in devices:
@@ -422,25 +422,25 @@ class MarzService(MarzServiceBase):
                     is_active=device.is_active,
                 )
             )
-        
+
         logger.info(
             f"Returning {len(device_list)} devices for user {request.uid} "
             f"(active_only={active_only})"
         )
-        
+
         await stream.send_message(
             UserDevicesHistory(uid=request.uid, devices=device_list)
         )
-    
+
     async def FetchAllDevices(
         self, stream: Stream[Empty, AllUsersDevices]
     ) -> None:
         """Получить историю устройств всех пользователей"""
         await stream.recv_message()
         logger.info("=== FetchAllDevices CALLED ===")
-        
+
         all_devices = self._device_storage.get_all_devices()
-        
+
         # Конвертируем в protobuf формат
         users_list = []
         for uid, devices in all_devices.items():
@@ -464,10 +464,10 @@ class MarzService(MarzServiceBase):
             users_list.append(
                 UserDevicesHistory(uid=uid, devices=device_list)
             )
-        
+
         logger.info(
             f"Returning device history for {len(users_list)} users, "
             f"total devices: {sum(len(u.devices) for u in users_list)}"
         )
-        
+
         await stream.send_message(AllUsersDevices(users=users_list))

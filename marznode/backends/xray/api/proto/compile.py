@@ -38,16 +38,13 @@ def compile_proto_from_source(dist):
     )
     print("Source downloaded. extracting and compiling...")
     r = requests.get(download_url, stream=True)
-    io_bytes = io.BytesIO(r.content)
-    tar = tarfile.open(fileobj=io_bytes, mode="r")
-    tar.extractall(tmp_dir)
-    v2ray_dir = os.path.join(tmp_dir, tar.getnames()[0])
-    tar.close()
-    io_bytes.close()
+    with io.BytesIO(r.content) as io_bytes, tarfile.open(fileobj=io_bytes, mode="r") as tar:
+        tar.extractall(tmp_dir)
+        v2ray_dir = os.path.join(tmp_dir, tar.getnames()[0])
 
     # find proto files
     proto_files = ""
-    for root, dirs, files in os.walk(tmp_dir):
+    for root, _dirs, files in os.walk(tmp_dir):
         for file in files:
             if file.endswith(".proto"):
                 proto_files += " " + os.path.join(root, file)
@@ -79,7 +76,7 @@ def fix_proto_imports(dist):
 
     # new_imp = f"marznode.{parent_dir.name}.{curr_dir.name}." + "{}"
 
-    for root, dirs, files in os.walk("."):
+    for root, _dirs, files in os.walk("."):
         for file in files:
             if file == "compile.py":
                 continue

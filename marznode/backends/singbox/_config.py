@@ -72,7 +72,7 @@ class SingBoxConfig(dict):
                 "flow": None,
             }
 
-            if "tls" in inbound and inbound["tls"].get("enabled") == True:
+            if "tls" in inbound and inbound["tls"].get("enabled"):
                 settings["tls"] = "tls"
                 if sni := inbound["tls"].get("server_name"):
                     settings["sni"].append(sni)

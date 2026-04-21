@@ -63,6 +63,7 @@ class BaseStorage(ABC):
         :return: nothing
         """
 
+    @abstractmethod
     def remove_inbound(self, inbound: Inbound | str) -> None:
         """
         removes an inbound
