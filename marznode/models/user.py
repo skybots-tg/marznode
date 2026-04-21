@@ -11,7 +11,7 @@ class User(BaseModel):
     username: str
     key: str
     inbounds: list["Inbound"] = []
-    
+
     # Device limit enforcement fields
     device_limit: Optional[int] = None  # None = no limit
     allowed_fingerprints: list[str] = Field(default_factory=list)
