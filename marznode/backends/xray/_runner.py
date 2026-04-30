@@ -65,13 +65,15 @@ class XrayCore:
         if "log" not in config:
             config["log"] = {}
 
-        if config.get("log", {}).get("loglevel") in ("none", "error"):
+        # error-уровень достаточен для marznode: warning засирает диск
+        # бесполезным шумом про reality-handshake, EOF и т.п.
+        if config.get("log", {}).get("loglevel") not in ("warning", "info", "debug"):
             config["log"]["loglevel"] = "warning"
 
         # ВСЕГДА устанавливаем access логи для отслеживания IP адресов
         # Перезаписываем существующие настройки
         config["log"]["access"] = "/var/log/xray/access.log"
-        logger.info(f"Access logging configured: {config['log'].get('access')}")
+        logger.debug("Access logging configured: %s", config['log'].get('access'))
 
         cmd = [self.executable_path, "run", "-config", "stdin:"]
         self._process = await asyncio.create_subprocess_shell(
@@ -89,7 +91,11 @@ class XrayCore:
 
         # Проверяем, что директория для логов существует и доступна для записи
         if os.path.exists(log_dir):
-            logger.info(f"Log directory exists: {log_dir}, writable: {os.access(log_dir, os.W_OK)}")
+            logger.debug(
+                "Log directory %s writable=%s",
+                log_dir,
+                os.access(log_dir, os.W_OK),
+            )
         else:
             logger.warning(f"Log directory not found: {log_dir}")
 
@@ -416,10 +422,10 @@ class XrayCore:
                 # Получаем размер файла
                 f.seek(0, os.SEEK_END)
                 file_size = f.tell()
-                logger.info(f"Access log file size: {file_size} bytes")
+                logger.debug("Access log file size: %d bytes", file_size)
 
                 if file_size == 0:
-                    logger.warning("Access log file is empty")
+                    logger.debug("Access log file is empty")
                     return
 
                 # Если файл маленький, читаем весь
@@ -431,13 +437,6 @@ class XrayCore:
                     f.seek(max(0, file_size - max_lines * 200))
                     lines = f.readlines()[1:]  # Пропускаем первую неполную строку
 
-                logger.info(f"Read {len(lines)} lines from access log")
-
-                # Показываем пример строки для отладки
-                if lines:
-                    sample_line = lines[-1].decode('utf-8', errors='ignore').strip()
-                    logger.info(f"Sample log line: {sample_line[:200]}")
-
                 # Парсим последние строки
                 parsed_count = 0
                 for line_bytes in lines[-max_lines:]:
@@ -448,7 +447,9 @@ class XrayCore:
                     except Exception as e:
                         logger.debug(f"Error parsing log line: {e}")
 
-                logger.info(f"Successfully parsed {parsed_count} log lines with user data")
+                logger.debug(
+                    "Parsed %d/%d access log lines", parsed_count, len(lines)
+                )
 
         except Exception as e:
             logger.error(f"Error reading access log file: {e}", exc_info=True)

@@ -365,10 +365,9 @@ class XrayBackend(VPNBackend):
         # Получаем метаданные из логов (IP адреса)
         log_meta = self._runner.get_last_meta()
 
-        logger.info("=== XrayBackend.get_users_meta() ===")
-        logger.info(f"Log metadata from access logs: {len(log_meta)} users")
-        for uid, data in list(log_meta.items())[:3]:  # Показываем первые 3
-            logger.info(f"  User {uid}: {data}")
+        logger.debug(
+            "get_users_meta: %d users in log_meta", len(log_meta)
+        )
 
         # Объединяем данные
         meta: dict[int, dict] = {}
@@ -384,11 +383,14 @@ class XrayBackend(VPNBackend):
             # Добавляем IP из логов, если он есть
             if uid in log_meta and "remote_ip" in log_meta[uid]:
                 user_meta["remote_ip"] = log_meta[uid]["remote_ip"]
-                logger.debug(f"Added remote_ip for user {uid}: {user_meta['remote_ip']}")
 
             meta[uid] = user_meta
 
-        logger.info(f"Returning metadata for {len(meta)} users, {sum(1 for m in meta.values() if 'remote_ip' in m)} with IPs")
+        logger.debug(
+            "get_users_meta: returning %d users, %d with IPs",
+            len(meta),
+            sum(1 for m in meta.values() if "remote_ip" in m),
+        )
         return meta
 
     async def _periodic_device_check(self):

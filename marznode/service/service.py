@@ -200,9 +200,8 @@ class MarzService(MarzServiceBase):
     async def FetchUsersStats(self, stream: Stream[Empty, UsersStats]) -> None:
         await stream.recv_message()
         storage_users = await self._storage.list_users() or []
-        logger.info(
-            "=== FetchUsersStats CALLED === storage has %d users, "
-            "%d backend(s) configured",
+        logger.debug(
+            "FetchUsersStats: storage=%d users, %d backend(s)",
             len(storage_users),
             len(self._backends),
         )
@@ -215,24 +214,17 @@ class MarzService(MarzServiceBase):
         # метаданные по пользователям
         meta: dict[int, dict[str, str]] = {}
 
-        logger.info(f"Processing {len(self._backends)} backends")
-
         for backend_name, backend in self._backends.items():
-            logger.info(f"Processing backend: {backend_name}, type: {type(backend).__name__}")
-
             # 1) как и раньше — usage
             stats = await backend.get_usages()
-            logger.info(f"  Got usage stats for {len(stats)} users")
             for uid, usage in stats.items():
                 total_usage[uid] += usage
 
             # 2) необязательные метаданные
             get_meta = getattr(backend, "get_users_meta", None)
             if not get_meta:
-                logger.warning(f"  Backend {backend_name} has NO get_users_meta method!")
+                logger.warning("Backend %s has NO get_users_meta", backend_name)
                 continue
-
-            logger.info(f"  Backend {backend_name} has get_users_meta, calling it...")
 
             try:
                 backend_meta = await get_meta()
@@ -290,17 +282,9 @@ class MarzService(MarzServiceBase):
                 )
             )
 
-        # Логируем что отправляем
-        logger.info("=== FetchUsersStats: Sending gRPC response ===")
-        logger.info(f"Total users in response: {len(user_stats)}")
-        for us in user_stats[:5]:  # Показываем первые 5
-            logger.info(
-                f"  User {us.uid}: usage={us.usage}, "
-                f"remote_ip='{us.remote_ip}', uplink={us.uplink}, downlink={us.downlink}, "
-                f"client_name='{us.client_name}'"
-            )
-        if len(user_stats) > 5:
-            logger.info(f"  ... and {len(user_stats) - 5} more users")
+        logger.debug(
+            "FetchUsersStats: sending %d user stats", len(user_stats)
+        )
 
         await stream.send_message(UsersStats(users_stats=user_stats))
 
