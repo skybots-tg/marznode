@@ -109,7 +109,8 @@ echo "[setup_log_rotation] forcing immediate rotation..."
 logrotate -f "$LOGROTATE_CONFIG" 2>&1 | tail -5 || true
 logrotate -f "$LOGROTATE_DOCKER" 2>&1 | tail -5 || true
 
-# === 5. Hourly cron (на случай, если /etc/cron.hourly отключён) ======
+# === 5. Hourly cron (страховка на случай редкого daily logrotate) =====
+mkdir -p /etc/cron.hourly /etc/cron.d
 HOURLY_CRON="/etc/cron.hourly/logrotate-marznode"
 cat > "$HOURLY_CRON" <<'EOF'
 #!/bin/sh
@@ -118,6 +119,16 @@ cat > "$HOURLY_CRON" <<'EOF'
 EOF
 chmod +x "$HOURLY_CRON"
 echo "[setup_log_rotation] установлен $HOURLY_CRON"
+
+# Дополнительно — /etc/cron.d/, на случай если /etc/cron.hourly не запускается
+CRON_D="/etc/cron.d/logrotate-marznode"
+cat > "$CRON_D" <<'EOF'
+# m h dom mon dow user command
+17 * * * * root /usr/sbin/logrotate /etc/logrotate.d/marznode-xray >/dev/null 2>&1
+23 * * * * root /usr/sbin/logrotate /etc/logrotate.d/marznode-docker >/dev/null 2>&1
+EOF
+chmod 0644 "$CRON_D"
+echo "[setup_log_rotation] установлен $CRON_D"
 
 echo "[setup_log_rotation] === готово ==="
 echo
