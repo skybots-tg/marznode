@@ -2,8 +2,7 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -186,3 +185,39 @@ class AllUsersDevices(_message.Message):
     USERS_FIELD_NUMBER: _ClassVar[int]
     users: _containers.RepeatedCompositeFieldContainer[UserDevicesHistory]
     def __init__(self, users: _Optional[_Iterable[_Union[UserDevicesHistory, _Mapping]]] = ...) -> None: ...
+
+class SystemStats(_message.Message):
+    __slots__ = ("cpu_percent", "cpu_count", "mem_total", "mem_used", "mem_available", "mem_percent", "disk_total", "disk_used", "disk_free", "disk_percent", "load_avg_1", "load_avg_5", "load_avg_15", "uptime_seconds", "collected_at", "disk_path")
+    CPU_PERCENT_FIELD_NUMBER: _ClassVar[int]
+    CPU_COUNT_FIELD_NUMBER: _ClassVar[int]
+    MEM_TOTAL_FIELD_NUMBER: _ClassVar[int]
+    MEM_USED_FIELD_NUMBER: _ClassVar[int]
+    MEM_AVAILABLE_FIELD_NUMBER: _ClassVar[int]
+    MEM_PERCENT_FIELD_NUMBER: _ClassVar[int]
+    DISK_TOTAL_FIELD_NUMBER: _ClassVar[int]
+    DISK_USED_FIELD_NUMBER: _ClassVar[int]
+    DISK_FREE_FIELD_NUMBER: _ClassVar[int]
+    DISK_PERCENT_FIELD_NUMBER: _ClassVar[int]
+    LOAD_AVG_1_FIELD_NUMBER: _ClassVar[int]
+    LOAD_AVG_5_FIELD_NUMBER: _ClassVar[int]
+    LOAD_AVG_15_FIELD_NUMBER: _ClassVar[int]
+    UPTIME_SECONDS_FIELD_NUMBER: _ClassVar[int]
+    COLLECTED_AT_FIELD_NUMBER: _ClassVar[int]
+    DISK_PATH_FIELD_NUMBER: _ClassVar[int]
+    cpu_percent: float
+    cpu_count: int
+    mem_total: int
+    mem_used: int
+    mem_available: int
+    mem_percent: float
+    disk_total: int
+    disk_used: int
+    disk_free: int
+    disk_percent: float
+    load_avg_1: float
+    load_avg_5: float
+    load_avg_15: float
+    uptime_seconds: int
+    collected_at: int
+    disk_path: str
+    def __init__(self, cpu_percent: _Optional[float] = ..., cpu_count: _Optional[int] = ..., mem_total: _Optional[int] = ..., mem_used: _Optional[int] = ..., mem_available: _Optional[int] = ..., mem_percent: _Optional[float] = ..., disk_total: _Optional[int] = ..., disk_used: _Optional[int] = ..., disk_free: _Optional[int] = ..., disk_percent: _Optional[float] = ..., load_avg_1: _Optional[float] = ..., load_avg_5: _Optional[float] = ..., load_avg_15: _Optional[float] = ..., uptime_seconds: _Optional[int] = ..., collected_at: _Optional[int] = ..., disk_path: _Optional[str] = ...) -> None: ...

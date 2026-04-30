@@ -14,6 +14,7 @@ from grpclib.server import Stream
 from marznode.backends.abstract_backend import VPNBackend
 from marznode.backends.xray.api.exceptions import EmailExistsError
 from marznode.storage import BaseStorage, DeviceStorage
+from marznode.utils.system_stats import collect_stats
 from ._device_history import record_device_history
 from .service_grpc import MarzServiceBase
 from .service_pb2 import (
@@ -35,6 +36,7 @@ from .service_pb2 import (
     UserDevicesHistory,
     AllUsersDevices,
     DeviceInfo as DeviceInfo_pb2,
+    SystemStats,
 )
 from ..models import User, Inbound as InboundModel
 
@@ -455,3 +457,33 @@ class MarzService(MarzServiceBase):
         )
 
         await stream.send_message(AllUsersDevices(users=users_list))
+
+    async def GetSystemStats(self, stream: Stream[Empty, SystemStats]) -> None:
+        """Return a cached snapshot of CPU/RAM/disk/load avg metrics.
+
+        Implementation lives in ``marznode.utils.system_stats`` and uses
+        an in-process TTL cache, so even if the panel polls every few
+        seconds we hit /proc at most once per cache interval.
+        """
+        await stream.recv_message()
+        snapshot = await asyncio.to_thread(collect_stats)
+        await stream.send_message(
+            SystemStats(
+                cpu_percent=snapshot.cpu_percent,
+                cpu_count=snapshot.cpu_count,
+                mem_total=snapshot.mem_total,
+                mem_used=snapshot.mem_used,
+                mem_available=snapshot.mem_available,
+                mem_percent=snapshot.mem_percent,
+                disk_total=snapshot.disk_total,
+                disk_used=snapshot.disk_used,
+                disk_free=snapshot.disk_free,
+                disk_percent=snapshot.disk_percent,
+                load_avg_1=snapshot.load_avg_1,
+                load_avg_5=snapshot.load_avg_5,
+                load_avg_15=snapshot.load_avg_15,
+                uptime_seconds=snapshot.uptime_seconds,
+                collected_at=snapshot.collected_at,
+                disk_path=snapshot.disk_path,
+            )
+        )

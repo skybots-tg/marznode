@@ -123,6 +123,40 @@ message AllUsersDevices {
   repeated UserDevicesHistory users = 1;
 }
 
+// Снимок системных метрик ноды (CPU / RAM / диск / load avg / uptime).
+// Считается с TTL-кэшем на стороне ноды, чтобы частые опросы панели
+// не нагружали сервер.
+message SystemStats {
+  // CPU usage as a percentage (0-100), averaged over the sample interval.
+  double cpu_percent = 1;
+  // Number of CPU logical cores.
+  uint32 cpu_count = 2;
+
+  // Memory in bytes.
+  uint64 mem_total = 3;
+  uint64 mem_used = 4;
+  uint64 mem_available = 5;
+  double mem_percent = 6;
+
+  // Root/data filesystem usage in bytes.
+  uint64 disk_total = 7;
+  uint64 disk_used = 8;
+  uint64 disk_free = 9;
+  double disk_percent = 10;
+
+  // Load average (Linux only). 0 if not available.
+  double load_avg_1 = 11;
+  double load_avg_5 = 12;
+  double load_avg_15 = 13;
+
+  // System uptime in seconds.
+  uint64 uptime_seconds = 14;
+  // Server-side timestamp when the snapshot was collected (Unix seconds).
+  int64 collected_at = 15;
+  // Path the disk_* numbers refer to (e.g. "/var/lib/marznode").
+  string disk_path = 16;
+}
+
 service MarzService {
   rpc SyncUsers(stream UserData) returns (Empty);
   rpc RepopulateUsers(UsersData) returns (Empty);
@@ -135,4 +169,6 @@ service MarzService {
   // Новые методы для истории устройств
   rpc FetchUserDevices(UserDevicesRequest) returns (UserDevicesHistory);
   rpc FetchAllDevices(Empty) returns (AllUsersDevices);
+  // Снимок CPU / RAM / диска ноды (кэшируется на стороне ноды).
+  rpc GetSystemStats(Empty) returns (SystemStats);
 }
