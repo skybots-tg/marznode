@@ -157,6 +157,18 @@ message SystemStats {
   string disk_path = 16;
 }
 
+// Отпечаток набора юзеров на ноде. Панель считает такой же по своей БД и
+// сверяет: разошлись — значит доставка обновления где-то потерялась, и надо
+// звать RepopulateUsers. Дешевле, чем выгружать весь список ради проверки.
+message UsersDigest {
+  // Сколько юзеров лежит в хранилище ноды.
+  uint32 count = 1;
+  // sha256 (hex) по строкам "<id>:<tag>,<tag>,...": теги внутри строки
+  // отсортированы и дедуплицированы, строки отсортированы как строки.
+  // Вторая реализация формата — marznode/utils/users_digest.py.
+  string digest = 2;
+}
+
 service MarzService {
   rpc SyncUsers(stream UserData) returns (Empty);
   rpc RepopulateUsers(UsersData) returns (Empty);
@@ -171,4 +183,6 @@ service MarzService {
   rpc FetchAllDevices(Empty) returns (AllUsersDevices);
   // Снимок CPU / RAM / диска ноды (кэшируется на стороне ноды).
   rpc GetSystemStats(Empty) returns (SystemStats);
+  // Отпечаток набора юзеров для сверки с панелью.
+  rpc GetUsersDigest(Empty) returns (UsersDigest);
 }

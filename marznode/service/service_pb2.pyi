@@ -221,3 +221,11 @@ class SystemStats(_message.Message):
     collected_at: int
     disk_path: str
     def __init__(self, cpu_percent: _Optional[float] = ..., cpu_count: _Optional[int] = ..., mem_total: _Optional[int] = ..., mem_used: _Optional[int] = ..., mem_available: _Optional[int] = ..., mem_percent: _Optional[float] = ..., disk_total: _Optional[int] = ..., disk_used: _Optional[int] = ..., disk_free: _Optional[int] = ..., disk_percent: _Optional[float] = ..., load_avg_1: _Optional[float] = ..., load_avg_5: _Optional[float] = ..., load_avg_15: _Optional[float] = ..., uptime_seconds: _Optional[int] = ..., collected_at: _Optional[int] = ..., disk_path: _Optional[str] = ...) -> None: ...
+
+class UsersDigest(_message.Message):
+    __slots__ = ("count", "digest")
+    COUNT_FIELD_NUMBER: _ClassVar[int]
+    DIGEST_FIELD_NUMBER: _ClassVar[int]
+    count: int
+    digest: str
+    def __init__(self, count: _Optional[int] = ..., digest: _Optional[str] = ...) -> None: ...

@@ -15,6 +15,7 @@ from marznode.backends.abstract_backend import VPNBackend
 from marznode.backends.xray.api.exceptions import EmailExistsError
 from marznode.storage import BaseStorage, DeviceStorage
 from marznode.utils.system_stats import collect_stats
+from marznode.utils.users_digest import users_digest
 from ._device_history import record_device_history
 from .service_grpc import MarzServiceBase
 from .service_pb2 import (
@@ -37,6 +38,7 @@ from .service_pb2 import (
     AllUsersDevices,
     DeviceInfo as DeviceInfo_pb2,
     SystemStats,
+    UsersDigest,
 )
 from ..models import User, Inbound as InboundModel
 
@@ -198,6 +200,26 @@ class MarzService(MarzServiceBase):
             len(await self._storage.list_users() or []),
         )
         await stream.send_message(Empty())
+
+    async def GetUsersDigest(self, stream: Stream[Empty, UsersDigest]) -> None:
+        """Отпечаток набора юзеров — чтобы панель могла заметить расхождение.
+
+        Панель толкает изменения по одному и до сих пор не имела способа
+        проверить, доехали ли они: полная сверка случалась только при
+        переподключении. Потерянная посылка жила до следующего обрыва связи.
+
+        Считать отпечаток дёшево, звать его можно часто; когда он разошёлся с
+        тем, что насчитала панель, она присылает RepopulateUsers.
+        """
+        await stream.recv_message()
+        users = await self._storage.list_users() or []
+        digest = users_digest(
+            (user.id, [i.tag for i in user.inbounds]) for user in users
+        )
+        logger.debug("GetUsersDigest: %d users, digest=%s", len(users), digest)
+        await stream.send_message(
+            UsersDigest(count=len(users), digest=digest)
+        )
 
     async def FetchUsersStats(self, stream: Stream[Empty, UsersStats]) -> None:
         await stream.recv_message()
