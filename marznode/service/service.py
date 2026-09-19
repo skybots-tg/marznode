@@ -15,7 +15,23 @@ from marznode.backends.abstract_backend import VPNBackend
 from marznode.backends.xray.api.exceptions import EmailExistsError
 from marznode.storage import BaseStorage, DeviceStorage
 from marznode.utils.system_stats import collect_stats
-from marznode.utils.users_digest import users_digest
+
+try:
+    from marznode.utils.users_digest import users_digest
+except ImportError:  # pragma: no cover - см. ниже
+    # Часть парка монтирует в контейнер отдельные файлы поверх образа, а не
+    # весь пакет: service.py оттуда новый, а marznode/utils/ — из образа, где
+    # нового модуля нет. Обычный импорт в такой конфигурации роняет marznode
+    # целиком, вместе с xray. Формат описан в marznode/utils/users_digest.py.
+    import hashlib
+
+    def users_digest(users) -> str:
+        lines = sorted(
+            "{}:{}".format(uid, ",".join(sorted(set(tags))))
+            for uid, tags in users
+        )
+        joined = chr(10).join(lines)
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
 from ._device_history import record_device_history
 from .service_grpc import MarzServiceBase
 from .service_pb2 import (
@@ -38,8 +54,16 @@ from .service_pb2 import (
     AllUsersDevices,
     DeviceInfo as DeviceInfo_pb2,
     SystemStats,
-    UsersDigest,
 )
+
+try:
+    from .service_pb2 import UsersDigest
+except ImportError:  # pragma: no cover
+    # То же самое для сгенерированного кода: на ноде со старым образом
+    # service_pb2 не знает про UsersDigest. RPC там всё равно не
+    # зарегистрирован (service_grpc.py тоже из образа), панель получает
+    # UNIMPLEMENTED и такую ноду не трогает.
+    UsersDigest = None
 from ..models import User, Inbound as InboundModel
 
 logger = logging.getLogger(__name__)
@@ -212,6 +236,8 @@ class MarzService(MarzServiceBase):
         тем, что насчитала панель, она присылает RepopulateUsers.
         """
         await stream.recv_message()
+        if UsersDigest is None:
+            raise GRPCError(Status.UNIMPLEMENTED, "UsersDigest not generated")
         users = await self._storage.list_users() or []
         digest = users_digest(
             (user.id, [i.tag for i in user.inbounds]) for user in users

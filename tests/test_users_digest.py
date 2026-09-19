@@ -37,3 +37,14 @@ def test_losing_an_inbound_changes_it():
 
 def test_an_empty_fleet_is_stable():
     assert users_digest([]) == users_digest(iter([]))
+
+
+def test_the_inline_fallback_in_service_py_agrees():
+    """service.py дублирует формат для нод, где смонтирован только он.
+
+    Копия существует потому, что обычный импорт там роняет marznode вместе с
+    xray; разойтись с оригиналом она не имеет права.
+    """
+    import marznode.service.service as svc
+
+    assert svc.users_digest(FIXTURE) == FIXTURE_DIGEST
