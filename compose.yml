@@ -5,6 +5,12 @@ services:
     network_mode: host
     command: [ "sh", "-c", "sleep 10 && python3 marznode.py" ]
 
+    # tini первым процессом. Без него PID 1 — сам marznode.py (sh exec'ает
+    # последнюю команду), а он чужих детей не дожидается: всё, что осиротело
+    # после `docker exec` (пробы мостов, диагностика — timeout, xray, pkill),
+    # висело зомби. За пять дней набегало 400–670 штук на ноду.
+    init: true
+
     # Ограничение размера docker-логов, чтобы /var/lib/docker/containers
     # не разрастался на гигабайты от verbose INFO marznode.
     logging:
