@@ -61,6 +61,7 @@ class XrayBackend(VPNBackend):
         # runtime" drift caused by ConnectionRefused races between
         # RestartBackend and the panel's RepopulateUsers push.
         self._reconcile_interval = 120
+        self._reconcile_now = asyncio.Event()
 
         asyncio.create_task(self._restart_on_failure())
         asyncio.create_task(self._periodic_device_check())
@@ -236,11 +237,10 @@ class XrayBackend(VPNBackend):
                 await restore_users_after_restart(
                     self._storage, snapshot, self.add_user
                 )
-                # Immediate reconcile so we don't wait for the
-                # periodic loop after a config-changing restart.
-                await reconcile_xray_users(
-                    self._storage, self._inbounds, self._api, self.add_user
-                )
+                # Reconcile right away rather than on the next tick, but
+                # in the loop's task: a confirmed gap waits a few seconds
+                # before the push, and RestartBackend has 30s in total.
+                self._reconcile_now.set()
             finally:
                 self._runner.restarting = False
                 logger.info("Set restarting flag to False after restart")
@@ -459,11 +459,18 @@ class XrayBackend(VPNBackend):
 
         Triggered on the same race condition that produced
         "6823 in storage / 0 in xray" on node31. Cheap when in sync
-        (one stats call), self-correcting when out of sync.
+        (one GetInboundUsers call per inbound), self-correcting when
+        out of sync. Runs every interval and right after a restart.
         """
         while True:
             try:
-                await asyncio.sleep(self._reconcile_interval)
+                try:
+                    await asyncio.wait_for(
+                        self._reconcile_now.wait(), self._reconcile_interval
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                self._reconcile_now.clear()
                 if not self.running or not self._api or not self._inbounds:
                     continue
                 await reconcile_xray_users(

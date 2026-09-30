@@ -12,12 +12,17 @@ be restored and why.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import Counter
 from typing import Awaitable, Callable
 
 from marznode.backends.xray.api.exceptions import (
     EmailExistsError,
+    TagNotFoundError,
+    UnimplementedError,
     XConnectionError,
+    XrayError,
 )
 from marznode.models import Inbound, User
 from marznode.storage import BaseStorage
@@ -181,13 +186,101 @@ async def push_storage_users(
     return {"added": added, "skipped": skipped, "failed": failed}
 
 
+# How long a gap between storage and xray has to persist before it is
+# pushed. The service takes a revoked user out of xray first and out of
+# storage second; a push into that window would put the user back into
+# xray with nothing left to take them out again.
+RECONCILE_CONFIRM_DELAY = 5.0
+
+# Xray refuses GetInboundUsers for inbounds whose proxy can't hold users;
+# add_user can't put anyone there either, so such inbounds aren't checked.
+_NOT_A_USER_MANAGER = "not a UserManager"
+
+# Which way of reading xray membership was last announced in the log:
+# once per switch, not every pass.
+_announced_mode: str | None = None
+
+Membership = dict[str, set[int]]
+Gaps = dict[tuple[int, str], User]
+
+
+def _uid(email: str) -> int | None:
+    # email format used by XrayBackend.add_user is "{user.id}.{username}".
+    try:
+        return int(email.split(".")[0])
+    except (ValueError, AttributeError):
+        return None
+
+
+def _announce(mode: str, level: int, message: str, *args) -> None:
+    global _announced_mode
+    if _announced_mode != mode:
+        _announced_mode = mode
+        logger.log(level, message, *args)
+
+
+def _preview(uids: list[int], limit: int = 20) -> str:
+    shown = ", ".join(map(str, uids[:limit]))
+    return shown if len(uids) <= limit else f"{shown} … (+{len(uids) - limit})"
+
+
+async def _read_membership(api, tags: list[str]) -> Membership:
+    """uids per inbound tag as xray holds them; unreadable tags left out.
+
+    Raises UnimplementedError when the core has no GetInboundUsers;
+    connection-level failures propagate and end the pass.
+    """
+    membership: Membership = {}
+    for tag in tags:
+        try:
+            emails = await api.get_inbound_users(tag)
+        except (UnimplementedError, XConnectionError):
+            raise
+        except TagNotFoundError:
+            logger.warning(
+                "reconcile_xray_users: inbound '%s' is not in running xray, "
+                "not checked",
+                tag,
+            )
+            continue
+        except XrayError as e:
+            permanent = _NOT_A_USER_MANAGER in (e.details or "")
+            logger.log(
+                logging.DEBUG if permanent else logging.WARNING,
+                "reconcile_xray_users: can't read users of inbound '%s': "
+                "%s (%s)",
+                tag,
+                e.details,
+                type(e).__name__,
+            )
+            continue
+        membership[tag] = {uid for uid in map(_uid, emails) if uid is not None}
+    return membership
+
+
+def _find_gaps(storage_users: list[User], membership: Membership) -> Gaps:
+    """(uid, tag) pairs that storage expects in xray and xray doesn't hold.
+
+    Only tags present in ``membership`` are compared: the rest belong to
+    another backend or couldn't be read.
+    """
+    gaps: Gaps = {}
+    for user in storage_users:
+        for inbound in user.inbounds or []:
+            present = membership.get(inbound.tag)
+            if present is not None and user.id not in present:
+                gaps[(user.id, inbound.tag)] = user
+    return gaps
+
+
 async def reconcile_xray_users(
     storage: BaseStorage,
     inbounds: list[Inbound],
     api,
     add_user: AddUserFn,
+    confirm_delay: float = RECONCILE_CONFIRM_DELAY,
 ) -> dict:
-    """Compare xray runtime users with storage and push the delta.
+    """Compare what each xray inbound holds with storage and push the gap.
 
     This is the safety net for the race that turned node31 into
     "6823 in storage, 0 in xray": if `add_inbound_user` failed because
@@ -195,10 +288,155 @@ async def reconcile_xray_users(
     storage but never gets into xray, and the panel never retries.
     Running this periodically guarantees eventual consistency.
 
+    Membership is read per inbound with GetInboundUsers. The stats
+    counters used before exist only for users that carried traffic since
+    the last reset, so idle users looked missing: every pass "found"
+    hundreds of them and re-added each one into EmailExistsError. Cores
+    without GetInboundUsers still get that stats-based pass.
+
     Returns counters for diagnostics.
     """
+    result = {
+        "mode": "inbound_users",
+        "runtime_emails": 0,
+        "storage_users": 0,
+        "missing": 0,
+        "pushed": 0,
+        "failed": 0,
+    }
     if not inbounds:
-        return {"runtime_emails": 0, "storage_users": 0, "pushed": 0}
+        return result
+
+    try:
+        membership = await _read_membership(api, [i.tag for i in inbounds])
+    except UnimplementedError as e:
+        return await _reconcile_by_stats(storage, inbounds, api, add_user, e.details)
+    except Exception as e:
+        logger.warning(
+            "reconcile_xray_users: can't read xray inbound users: %s (%s), "
+            "skipping pass",
+            e,
+            type(e).__name__,
+        )
+        return result
+
+    storage_users = await storage.list_users() or []
+    gaps = _find_gaps(storage_users, membership)
+    result["runtime_emails"] = len(set().union(*membership.values()))
+    result["storage_users"] = len(storage_users)
+    _announce(
+        "inbound_users",
+        logging.INFO,
+        "reconcile_xray_users: checking storage against GetInboundUsers of "
+        "%d/%d inbound(s); storage has %d users, xray %d",
+        len(membership),
+        len(inbounds),
+        len(storage_users),
+        result["runtime_emails"],
+    )
+    if not gaps:
+        logger.debug(
+            "reconcile_xray_users: in sync (storage=%d users, %d inbounds "
+            "checked)",
+            len(storage_users),
+            len(membership),
+        )
+        return result
+
+    await asyncio.sleep(confirm_delay)
+    try:
+        membership = await _read_membership(api, sorted({tag for _, tag in gaps}))
+    except Exception as e:
+        logger.warning(
+            "reconcile_xray_users: re-check failed: %s (%s), %d gap(s) left "
+            "for the next pass",
+            e,
+            type(e).__name__,
+            len(gaps),
+        )
+        return result
+    fresh = _find_gaps(await storage.list_users() or [], membership)
+    confirmed = gaps.keys() & fresh.keys()
+    if not confirmed:
+        logger.info(
+            "reconcile_xray_users: %d gap(s) closed by themselves within "
+            "%.0fs (a panel update was in flight)",
+            len(gaps),
+            confirm_delay,
+        )
+        return result
+    gaps = {pair: fresh[pair] for pair in sorted(confirmed)}
+    result["missing"] = len(gaps)
+
+    uids = sorted({uid for uid, _ in gaps})
+    logger.warning(
+        "reconcile_xray_users: drift detected — %d user→inbound pair(s) of "
+        "%d user(s) are in storage but not in xray: %s; uids: %s",
+        len(gaps),
+        len(uids),
+        dict(Counter(tag for _, tag in gaps)),
+        _preview(uids),
+    )
+
+    inbounds_by_tag = {i.tag: i for i in inbounds}
+    already = 0
+    for (uid, tag), user in gaps.items():
+        try:
+            await add_user(user, inbounds_by_tag[tag])
+            result["pushed"] += 1
+        except EmailExistsError:
+            already += 1
+        except (OSError, XConnectionError) as e:
+            result["failed"] += 1
+            logger.warning(
+                "reconcile_xray_users: still cannot push user id=%s "
+                "into inbound=%s: %s (%s) — will retry next pass",
+                uid,
+                tag,
+                e,
+                type(e).__name__,
+            )
+        except Exception as e:
+            result["failed"] += 1
+            logger.error(
+                "reconcile_xray_users: failed to push user id=%s "
+                "into inbound=%s: %s (%s)",
+                uid,
+                tag,
+                e,
+                type(e).__name__,
+                exc_info=True,
+            )
+    logger.warning(
+        "reconcile_xray_users: pushed %d user→inbound entries to recover "
+        "drift, %d already present, %d still failing",
+        result["pushed"],
+        already,
+        result["failed"],
+    )
+    return result
+
+
+async def _reconcile_by_stats(
+    storage: BaseStorage,
+    inbounds: list[Inbound],
+    api,
+    add_user: AddUserFn,
+    reason: str | None,
+) -> dict:
+    """The pass for cores without GetInboundUsers: runtime from stats.
+
+    Stats counters exist only for users that carried traffic since the
+    last reset, so idle users look missing here and get re-added into
+    EmailExistsError on every pass. Kept only for Xray older than 25.x.
+    """
+    _announce(
+        "stats",
+        logging.WARNING,
+        "reconcile_xray_users: xray has no GetInboundUsers (%s), falling "
+        "back to stats — idle users will show up as drift",
+        reason,
+    )
 
     try:
         api_stats = await api.get_users_stats(reset=False)
@@ -207,23 +445,20 @@ async def reconcile_xray_users(
             "reconcile_xray_users: xray API unreachable (%s), skipping pass",
             e,
         )
-        return {"runtime_emails": 0, "storage_users": 0, "pushed": 0}
+        return {"mode": "stats", "runtime_emails": 0, "storage_users": 0, "pushed": 0}
     except Exception as e:
         logger.warning(
             "reconcile_xray_users: get_users_stats failed: %s (%s)",
             e,
             type(e).__name__,
         )
-        return {"runtime_emails": 0, "storage_users": 0, "pushed": 0}
+        return {"mode": "stats", "runtime_emails": 0, "storage_users": 0, "pushed": 0}
 
-    # email format used by XrayBackend.add_user is "{user.id}.{username}".
     runtime_uids: set[int] = set()
     for stat in api_stats:
-        try:
-            uid = int(stat.name.split(".")[0])
-        except (ValueError, IndexError, AttributeError):
-            continue
-        runtime_uids.add(uid)
+        uid = _uid(stat.name)
+        if uid is not None:
+            runtime_uids.add(uid)
 
     storage_users = await storage.list_users() or []
     storage_uids = {u.id for u in storage_users}
@@ -236,6 +471,7 @@ async def reconcile_xray_users(
             len(runtime_uids),
         )
         return {
+            "mode": "stats",
             "runtime_emails": len(runtime_uids),
             "storage_users": len(storage_uids),
             "pushed": 0,
@@ -292,6 +528,7 @@ async def reconcile_xray_users(
         failed,
     )
     return {
+        "mode": "stats",
         "runtime_emails": len(runtime_uids),
         "storage_users": len(storage_uids),
         "pushed": pushed,

@@ -49,6 +49,10 @@ class UnknownError(XrayError):
         super().__init__(details)
 
 
+class UnimplementedError(XrayError):
+    """The running core has no such API method (it is older than the call)."""
+
+
 class RelatedError(XrayError):
     def __new__(cls, error: grpclib.exceptions.GRPCError):
         details = error.message
