@@ -57,6 +57,11 @@ async def record_device_history(
 
             if not remote_ip:
                 continue
+            # Panel ids start at 1. uid 0 is a static client from the xray
+            # config itself (e.g. "0.bridge" on exit nodes): nothing to
+            # enforce, and its devices mean nothing to the panel.
+            if uid <= 0:
+                continue
 
             try:
                 storage_user = await storage.list_users(uid)

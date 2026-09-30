@@ -14,7 +14,9 @@ class MemoryStorage(BaseStorage):
         self.storage = dict({"users": {}, "inbounds": {}})
 
     async def list_users(self, user_id: int | None = None) -> list[User] | User | None:
-        if user_id:
+        # 0 is a real id (the xray config's own "0.bridge" client reports as
+        # uid 0), not "no filter": a truthiness check returned every user.
+        if user_id is not None:
             return self.storage["users"].get(user_id)
         return list(self.storage["users"].values())
 
