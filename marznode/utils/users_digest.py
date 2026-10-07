@@ -13,6 +13,12 @@
 * строки отсортированы как строки (то есть ``"10:"`` идёт раньше ``"9:"`` —
   это не ошибка, важно лишь чтобы обе стороны сортировали одинаково);
 * всё склеено через ``"\n"``, от utf-8 берётся sha256, отдаётся hex.
+
+Второй отпечаток, ``keyed_users_digest``, устроен так же, но в строке юзера
+между id и тегами стоит его ключ: ``"<id>:<key>:<tag>,<tag>,..."``. Первый
+смену ключа не видит, а ключ меняется при перевыпуске ссылки: нода, не
+получившая новый ключ, пускала по старому и сверку при этом проходила.
+Наружу ключ не уходит — от строк берётся тот же sha256.
 """
 
 import hashlib
@@ -23,5 +29,14 @@ def users_digest(users: Iterable[tuple[int, Iterable[str]]]) -> str:
     """sha256 по парам (id юзера, его инбаунд-теги)."""
     lines = sorted(
         "{}:{}".format(uid, ",".join(sorted(set(tags)))) for uid, tags in users
+    )
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def keyed_users_digest(users: Iterable[tuple[int, str, Iterable[str]]]) -> str:
+    """sha256 по тройкам (id юзера, его ключ, его инбаунд-теги)."""
+    lines = sorted(
+        "{}:{}:{}".format(uid, key, ",".join(sorted(set(tags))))
+        for uid, key, tags in users
     )
     return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()

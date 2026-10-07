@@ -12,23 +12,35 @@ from grpclib import GRPCError, Status
 from grpclib.server import Stream
 
 from marznode.backends.abstract_backend import VPNBackend
-from marznode.backends.xray.api.exceptions import EmailExistsError
+from marznode.backends.xray.api.exceptions import (
+    EmailExistsError,
+    EmailNotFoundError,
+)
 from marznode.storage import BaseStorage, DeviceStorage
 from marznode.utils.system_stats import collect_stats
 
 try:
-    from marznode.utils.users_digest import users_digest
+    from marznode.utils.users_digest import keyed_users_digest, users_digest
 except ImportError:  # pragma: no cover - см. ниже
     # Часть парка монтирует в контейнер отдельные файлы поверх образа, а не
     # весь пакет: service.py оттуда новый, а marznode/utils/ — из образа, где
-    # нового модуля нет. Обычный импорт в такой конфигурации роняет marznode
-    # целиком, вместе с xray. Формат описан в marznode/utils/users_digest.py.
+    # нового модуля (или нового отпечатка в нём) нет. Обычный импорт в такой
+    # конфигурации роняет marznode целиком, вместе с xray. Формат описан в
+    # marznode/utils/users_digest.py.
     import hashlib
 
     def users_digest(users) -> str:
         lines = sorted(
             "{}:{}".format(uid, ",".join(sorted(set(tags))))
             for uid, tags in users
+        )
+        joined = chr(10).join(lines)
+        return hashlib.sha256(joined.encode("utf-8")).hexdigest()
+
+    def keyed_users_digest(users) -> str:
+        lines = sorted(
+            "{}:{}:{}".format(uid, key, ",".join(sorted(set(tags))))
+            for uid, key, tags in users
         )
         joined = chr(10).join(lines)
         return hashlib.sha256(joined.encode("utf-8")).hexdigest()
@@ -64,6 +76,12 @@ except ImportError:  # pragma: no cover
     # зарегистрирован (service_grpc.py тоже из образа), панель получает
     # UNIMPLEMENTED и такую ноду не трогает.
     UsersDigest = None
+# service_pb2 из образа может знать UsersDigest, но ещё без keyed_digest.
+# Тогда поле не заполняем: панель увидит его пустым и сверит по старому.
+_HAS_KEYED_DIGEST = (
+    UsersDigest is not None
+    and "keyed_digest" in UsersDigest.DESCRIPTOR.fields_by_name
+)
 from ..models import User, Inbound as InboundModel
 
 logger = logging.getLogger(__name__)
@@ -149,6 +167,9 @@ class MarzService(MarzServiceBase):
             """we're asked to remove a user which we don't have, just pass."""
             return
 
+        if storage_user.key != user.key:
+            return await self._rekey_user(storage_user, user, user_data)
+
         """otherwise synchronize the user with what 
         the client has sent us"""
         storage_tags = {i.tag for i in storage_user.inbounds}
@@ -161,6 +182,50 @@ class MarzService(MarzServiceBase):
         await self._remove_user(storage_user, removed_inbounds)
         await self._add_user(storage_user, added_inbounds)
         await self._storage.update_user_inbounds(storage_user, new_inbounds)
+
+    async def _rekey_user(
+        self, storage_user: User, user: User, user_data: UserData
+    ) -> None:
+        """Юзер уже заведён, а ключ пришёл другой — перевыпуск ссылки.
+
+        Сверка выше смотрит только на набор инбаундов, и раньше смена ключа
+        молча терялась: ни SyncUsers, ни RepopulateUsers её не доносили, нода
+        пускала по старому ключу, а новая ссылка не работала нигде. Xray ключ
+        у заведённого юзера не меняет, поэтому снимаем со всех инбаундов и
+        заводим заново.
+
+        Хранилище обновляется первым. Сверка xray (``reconcile_xray_users``)
+        берёт ключ оттуда: если она успеет вернуть юзера в xray между нашим
+        снятием и добавлением, вернёт уже с новым ключом, а наше добавление
+        упрётся в EmailExistsError, что тоже успех.
+        """
+        logger.info(
+            "_update_user: key of user id=%s username=%s changed, "
+            "re-adding on %d inbound(s)",
+            user.id,
+            user.username,
+            len(user_data.inbounds),
+        )
+        old_inbounds = list(storage_user.inbounds)
+        new_inbounds = await self._storage.list_inbounds(
+            tag=[i.tag for i in user_data.inbounds]
+        )
+        await self._storage.update_user_inbounds(user, new_inbounds)
+        try:
+            for inbound in old_inbounds:
+                backend = self._resolve_tag(inbound.tag)
+                try:
+                    await backend.remove_user(storage_user, inbound)
+                except EmailNotFoundError:
+                    # В xray его там и так нет — добавим ниже.
+                    pass
+        except BaseException:
+            # Старый ключ мог остаться в xray. Хранилище возвращаем как было,
+            # чтобы отпечаток с ключом это показал и панель прислала юзера
+            # снова, а не считала дело сделанным.
+            await self._storage.update_user_inbounds(storage_user, old_inbounds)
+            raise
+        await self._add_user(user, new_inbounds)
 
     async def SyncUsers(self, stream: Stream[UserData, Empty]) -> None:
         logger.info("=== SyncUsers stream OPENED ===")
@@ -242,10 +307,15 @@ class MarzService(MarzServiceBase):
         digest = users_digest(
             (user.id, [i.tag for i in user.inbounds]) for user in users
         )
-        logger.debug("GetUsersDigest: %d users, digest=%s", len(users), digest)
-        await stream.send_message(
-            UsersDigest(count=len(users), digest=digest)
-        )
+        fields = {"count": len(users), "digest": digest}
+        if _HAS_KEYED_DIGEST:
+            # Смену ключа первый отпечаток не видит — см. _rekey_user.
+            fields["keyed_digest"] = keyed_users_digest(
+                (user.id, user.key, [i.tag for i in user.inbounds])
+                for user in users
+            )
+        logger.debug("GetUsersDigest: %s", fields)
+        await stream.send_message(UsersDigest(**fields))
 
     async def FetchUsersStats(self, stream: Stream[Empty, UsersStats]) -> None:
         await stream.recv_message()
